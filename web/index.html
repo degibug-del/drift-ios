@@ -1,0 +1,1437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="DRIFT">
+<meta name="theme-color" content="#000000">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>DRIFT</title>
+<meta name="description" content="Drift — an arcade game: steer one line through a particle field, one run, one score. Browser-only.">
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/drift/sw.js', { scope: '/drift/' }).catch(function () {});
+  });
+}
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{background:#000;overflow:hidden;width:100%;height:100%;touch-action:none;font-family:'Courier New',monospace;}
+canvas{display:block;position:fixed;inset:0;}
+
+#hud{position:fixed;inset:0;pointer-events:none;}
+
+#brand{
+  position:fixed;top:16px;left:50%;transform:translateX(-50%);
+  font-size:.58rem;letter-spacing:.32em;text-transform:uppercase;
+  color:rgba(232,144,80,.35);pointer-events:none;white-space:nowrap;
+}
+#score-hud{
+  position:fixed;top:14px;left:18px;
+  font-size:.7rem;letter-spacing:.06em;color:rgba(255,176,0,.5);
+  line-height:1.6;
+}
+#level-hud{
+  position:fixed;top:14px;right:18px;
+  font-size:.6rem;letter-spacing:.08em;text-align:right;
+  color:rgba(255,255,255,.18);line-height:1.7;
+}
+#ability-hud{
+  position:fixed;bottom:38px;left:50%;transform:translateX(-50%);
+  font-size:.52rem;letter-spacing:.14em;color:rgba(255,255,255,.2);
+  white-space:nowrap;
+}
+#mode-hud{
+  position:fixed;bottom:16px;right:16px;
+  font-size:.55rem;letter-spacing:.14em;color:rgba(255,255,255,.08);
+}
+#spawn-btn{
+  position:fixed;top:14px;right:18px;
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(220,40,40,.7);border:1px solid rgba(255,80,80,.5);
+  cursor:pointer;pointer-events:all;
+  box-shadow:0 0 8px rgba(220,40,40,.4);
+  transition:background .15s,box-shadow .15s;
+}
+#spawn-btn:hover{background:rgba(255,60,60,.9);box-shadow:0 0 16px rgba(255,60,60,.7);}
+#ally-btn{
+  position:fixed;top:14px;left:18px;
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(40,120,220,.7);border:1px solid rgba(80,160,255,.5);
+  cursor:pointer;pointer-events:all;
+  box-shadow:0 0 8px rgba(40,120,220,.4);
+  transition:background .15s,box-shadow .15s;
+}
+#ally-btn:hover{background:rgba(60,150,255,.9);box-shadow:0 0 16px rgba(60,150,255,.7);}
+#opp-btn{
+  position:fixed;top:14px;right:48px;
+  width:22px;height:22px;border-radius:50%;
+  background:rgba(200,160,20,.7);border:1px solid rgba(255,210,40,.5);
+  cursor:pointer;pointer-events:all;
+  box-shadow:0 0 8px rgba(200,160,20,.4);
+  transition:background .15s,box-shadow .15s;
+}
+#opp-btn:hover{background:rgba(255,210,40,.9);box-shadow:0 0 16px rgba(255,210,40,.7);}
+
+
+#lb-panel{
+  position:fixed;top:14px;right:18px;
+  font-size:.52rem;letter-spacing:.08em;
+  color:rgba(255,255,255,.22);
+  line-height:1.9;
+  text-align:right;
+  pointer-events:none;
+}
+#lb-panel .lb-title{
+  color:rgba(232,144,80,.3);
+  letter-spacing:.18em;
+  font-size:.48rem;
+  margin-bottom:2px;
+}
+#lb-panel .lb-me{
+  color:rgba(232,144,80,.55);
+}
+#ctrl-hud{
+  position:fixed;bottom:16px;left:16px;
+  font-size:.55rem;letter-spacing:.1em;color:rgba(255,255,255,.12);
+  display:flex;gap:14px;
+}
+.ctrl-item{cursor:pointer;pointer-events:all;}
+
+/* Ability button — touch only.
+   Desktop fires abilities with Space: free, instant, and it does not move your
+   aim. Touch had only double-tap, which now costs two bursts and shifts the
+   attractor mid-fight. This is the finger's spacebar.
+   Shown only for coarse pointers, so the desktop game is unchanged. Sized past
+   the 44px minimum touch target and placed bottom-right, clear of restart/AUTO
+   at bottom-left and the leaderboard at top-right. */
+/* Hidden until there is evidence of touch.
+   A (pointer: coarse) media query alone was wrong in both directions: a laptop
+   with a touchscreen reports a fine pointer and would never get the button,
+   and a device can report coarse without anyone touching the screen. So the
+   trigger is the first real touch event — it responds to how the game is
+   actually being played rather than what the hardware claims. */
+#ability-btn{
+  display:none;                      /* the two rules below are the only things that show it */
+  align-items:center; justify-content:center; text-align:center;
+  position:fixed; right:18px; bottom:22px; z-index:60;
+  width:72px; height:72px; border-radius:50%;
+  background:rgba(255,255,255,.05);
+  border:1px solid rgba(255,176,0,.38);
+  color:rgba(255,176,0,.82);
+  font:600 8.5px/1.25 ui-monospace,monospace; letter-spacing:.09em;
+  text-transform:uppercase; padding:6px;
+  -webkit-tap-highlight-color:transparent; touch-action:manipulation;
+  pointer-events:all; cursor:pointer;
+}
+html[data-touch="1"] #ability-btn{ display:flex; }
+@media (pointer: coarse){ #ability-btn{ display:flex; } }
+/* cooling down is stated, not implied by being slightly dimmer */
+#ability-btn[data-cd="1"]{
+  border-color:rgba(255,255,255,.14); color:rgba(255,255,255,.28);
+}
+
+/* ready overlay */
+#ready-overlay{
+  position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+  flex-direction:column;gap:14px;background:rgba(0,0,0,.88);z-index:200;
+}
+#ready-overlay.gone{display:none;}
+.ro-class{font-size:1.4rem;letter-spacing:.18em;font-weight:bold;}
+.ro-ability{font-size:.62rem;letter-spacing:.12em;color:rgba(255,255,255,.32);}
+.ro-mode{font-size:.62rem;letter-spacing:.16em;color:rgba(255,255,255,.2);margin-bottom:4px;}
+.ro-count{font-size:2.4rem;letter-spacing:.06em;color:rgba(255,255,255,.65);}
+
+/* end overlay */
+#end-overlay{
+  position:fixed;inset:0;
+  display:none;align-items:center;justify-content:center;
+  background:rgba(0,0,0,.72);
+  flex-direction:column;gap:18px;
+  pointer-events:all;
+}
+#end-overlay.show{display:flex;}
+.end-title{font-size:.62rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.6);}
+.end-score{font-size:3.5rem;letter-spacing:-.02em;color:#fff;line-height:1;}
+.end-xp{font-size:.65rem;letter-spacing:.14em;color:rgba(110,231,183,.45);}
+.end-best{font-size:.65rem;letter-spacing:.14em;color:rgba(255,255,255,.28);}
+.end-btns{display:flex;gap:12px;margin-top:8px;}
+.end-btn{
+  border:1px solid rgba(255,255,255,.14);
+  background:transparent;color:rgba(255,255,255,.5);
+  font-family:inherit;font-size:.6rem;letter-spacing:.18em;text-transform:uppercase;
+  padding:10px 22px;cursor:pointer;transition:all .2s;
+  text-decoration:none;display:flex;align-items:center;
+}
+.end-btn:hover{border-color:rgba(232,144,80,.5);color:#e89050;}
+.end-btn.accent{background:rgba(232,144,80,.12);border-color:rgba(232,144,80,.4);color:#e89050;}
+</style>
+<style>.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}</style>
+</head>
+<body>
+<h1 class="sr-only">DRIFT — the arcade</h1>
+
+<canvas id="c"></canvas>
+
+<!-- The leaderboard panel. #lb-panel was styled and loadLB() has polled for it
+     every 15s since launch, but the element itself was never added, so
+     getElementById('lb-rows') returned null and the throw went into the same
+     .catch(() => {}) that hid the missing endpoint. Starts empty and stays
+     empty until a board exists, which is why there is no placeholder text. -->
+<div id="lb-panel" aria-hidden="true">
+  <div class="lb-title">best by class</div>
+  <div id="lb-rows"></div>
+</div>
+
+
+<div id="hud">
+  <div id="brand">phronesis · drift</div>
+  <div id="score-hud" style="display:none">
+    <div id="sc-you">YOU  000</div>
+    <div id="sc-opp" style="display:none"></div>
+  </div>
+  <div id="level-hud">
+    <div id="lv-label">LV 1</div>
+    <div id="cls-label" style="font-size:.5rem;opacity:.6"></div>
+  </div>
+  <div id="ability-hud" style="display:none">
+    <span id="ability-label">TAP · ABILITY</span>
+  </div>
+  <div id="mode-hud"></div>
+  <div id="ctrl-hud">
+    <span class="ctrl-item" id="ctrl-back">restart</span>
+    <span class="ctrl-item" id="ctrl-auto">AUTO</span>
+  </div>
+</div>
+
+<!-- the finger's spacebar; hidden unless the pointer is coarse -->
+<button id="ability-btn" type="button" aria-label="fire ability"><span id="ability-btn-label">ability</span></button>
+
+<div id="ready-overlay" class="gone">
+  <div class="ro-class" id="ro-class-name">VOID</div>
+  <div class="ro-ability" id="ro-ability-txt"></div>
+  <div class="ro-mode" id="ro-mode-txt"></div>
+  <div class="ro-count" id="ro-count">3</div>
+</div>
+
+<div id="end-overlay">
+  <div class="end-title">round over</div>
+  <div class="end-score" id="end-score-val">000</div>
+  <div class="end-xp" id="end-xp-val"></div>
+  <div class="end-best" id="end-best-val"></div>
+  <div class="end-btns">
+    <span class="end-btn" onclick="backToTitle()">Menu</span>
+    <span class="end-btn accent" onclick="shareRun()">Share</span>
+    <span class="end-btn" onclick="restartMode()">Again</span>
+  </div>
+  <div id="share-status" style="font-size:.55rem;letter-spacing:.14em;color:rgba(110,231,183,.75);opacity:0;transition:opacity .3s;min-height:13px;">&nbsp;</div>
+</div>
+
+<!-- // how to play -->
+<span id="howto-btn" style="position:fixed;bottom:16px;left:130px;z-index:150;font-size:.55rem;letter-spacing:.1em;color:rgba(255,255,255,.5);cursor:pointer;" onclick="document.getElementById('howto-overlay').style.display='flex'">how to play</span>
+
+<div id="howto-overlay" style="position:fixed;inset:0;z-index:300;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.88);" onclick="this.style.display='none'">
+  <div style="width:min(540px,92vw);max-height:80vh;overflow-y:auto;touch-action:pan-y;padding:26px 24px;border:1px solid rgba(232,144,80,.25);background:#000;font-size:.62rem;letter-spacing:.06em;line-height:1.9;color:rgba(255,255,255,.55);" onclick="event.stopPropagation()">
+    <div style="font-size:.68rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.8);margin-bottom:10px;">// how to play</div>
+    <div>drift is a field sport. you steer a warm attractor; loose particles bend toward it. a particle that crosses a gate line scores.</div>
+
+    <div style="font-size:.55rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.7);margin:16px 0 4px;">controls</div>
+    <div><span style="color:rgba(255,176,0,.75)">move</span> · mouse or finger — the attractor follows the cursor</div>
+    <div><span style="color:rgba(255,176,0,.75)">click / tap</span> — pulse · nearby particles accelerate toward the point</div>
+    <div><span style="color:rgba(255,176,0,.75)">space / double-tap</span> — class ability, named in the bottom-center hud:</div>
+    <div style="padding-left:14px;">void · singularity — pulls every particle to the cursor · 6s cooldown<br>surge · chain gate — places a fresh gate at the cursor · 8s<br>phase · freeze — gates stop decaying for 4s · 9s</div>
+    <div><span style="color:rgba(255,176,0,.75)">auto / hold</span> (bottom left) — auto keeps the pull on; hold pulls only while pressed, and pull strength builds while held</div>
+    <div><span style="color:rgba(255,176,0,.75)">restart</span> (bottom left) — replays the current mode from the 3-count</div>
+
+    <div style="font-size:.55rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.7);margin:16px 0 4px;">round</div>
+    <div>a 3-count, then the timer bar along the bottom edge runs down; the round ends when it empties. the end panel shows score, xp gained, and your best. again replays the mode; menu opens the class and mode select, where a click picks a class, select mode confirms it, and a second click starts the chosen mode.</div>
+
+    <div style="font-size:.55rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.7);margin:16px 0 4px;">scoring</div>
+    <div>each particle can cross a given gate once — 1 point, gold gates 3, and every crossing counts for you. in 1v1 and 2v2, particles pulled cold (blue) score for the machine instead, a flat 1 per crossing — gold value and chain multipliers apply to your side only. any crossing, warm or cold, keeps the chain alive. gates fade on their own, so a crossing must land before its gate decays.</div>
+    <div>scores landing within 2.2s of each other chain a multiplier — x2, x3, x5, up to x10.</div>
+    <div>every 15 points the field steps up: gates spawn faster, decay faster, and turn gold more often.</div>
+    <div>score converts to xp — 150 per level. bests save per mode on this device, and every scoring round posts to the shared phronesis leaderboard with your mode, class, and level.</div>
+
+    <div style="font-size:.55rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.7);margin:16px 0 4px;">modes</div>
+    <div>solo — 90s · open field, no opponent</div>
+    <div>1v1 — 90s · one machine runs a cold attractor against yours</div>
+    <div>2v2 — 90s · a machine partner pulls warm with you, two pull cold; totals read us / them</div>
+    <div>zen — 180s · the long round</div>
+    <div>blitz — 45s · the short round</div>
+    <div>// glitch — 60s · distortion climbs as the timer falls; particles jitter and gates decay faster</div>
+
+    <div style="font-size:.55rem;letter-spacing:.26em;text-transform:uppercase;color:rgba(232,144,80,.7);margin:16px 0 4px;">tip</div>
+    <div>the chain outscores any single gate. keep one dense cluster and sweep it through fresh gates so crossings land inside the two-second window — a x10 on a gold gate pays 30.</div>
+
+    <span style="display:inline-block;margin-top:18px;border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.55);font-size:.6rem;letter-spacing:.18em;text-transform:uppercase;padding:10px 22px;cursor:pointer;" onclick="document.getElementById('howto-overlay').style.display='none'">close</span>
+  </div>
+</div>
+
+<script>
+// ── july 4 theme ──────────────────────────────────────────────────────────────
+// auto-on every july 4 · ?j4=1 forces on · ?j4=0 forces off
+const J4=(()=>{
+  const q=new URLSearchParams(location.search).get('j4');
+  if(q==='0')return false;
+  if(q==='1'||q==='true')return true;
+  const d=new Date();return d.getMonth()===6&&d.getDate()===4;
+})();
+
+const c=document.getElementById('c');
+const ctx=c.getContext('2d');
+let W,H,DPR;
+function resize(){
+  DPR=window.devicePixelRatio||1;
+  W=window.innerWidth;H=window.innerHeight;
+  c.width=W*DPR;c.height=H*DPR;
+  c.style.width=W+'px';c.style.height=H+'px';
+  ctx.scale(DPR,DPR);
+}
+resize();
+window.addEventListener('resize',resize);
+
+// ── haptics ───────────────────────────────────────────────────────────────────
+const Haptic={
+  _v:!!navigator.vibrate,
+  tap:()=>Haptic._v&&navigator.vibrate(8),
+  light:()=>Haptic._v&&navigator.vibrate(12),
+  medium:()=>Haptic._v&&navigator.vibrate(28),
+  success:()=>Haptic._v&&navigator.vibrate([15,60,30]),
+  combo:()=>Haptic._v&&navigator.vibrate([8,20,8]),
+};
+
+// ── july 4 fireworks (cosmetic · background layer · red/white/blue) ────────────
+const J4_COLS=[[255,64,64],[255,255,255],[92,150,255]];
+const fireworks=[];
+function spawnFirework(x,y){
+  const n=27+Math.floor(Math.random()*15);
+  for(let i=0;i<n;i++){
+    const a=(i/n)*Math.PI*2+Math.random()*.22;
+    const sp=1.3+Math.random()*2.9;
+    const col=J4_COLS[i%3];        // red/white/blue in the same shell
+    fireworks.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:1,col});
+  }
+  fireworks.push({x,y,vx:0,vy:0,life:1,col:[255,255,255],flash:true}); // launch flash
+}
+function updateFireworks(){
+  for(let i=fireworks.length-1;i>=0;i--){
+    const f=fireworks[i];
+    if(f.flash){
+      f.life-=.09;
+      if(f.life<=0){fireworks.splice(i,1);continue;}
+      ctx.beginPath();ctx.arc(f.x,f.y,4+(1-f.life)*22,0,Math.PI*2);
+      ctx.fillStyle=`rgba(255,255,255,${f.life*.5})`;ctx.fill();
+      continue;
+    }
+    f.x+=f.vx;f.y+=f.vy;f.vy+=.026;f.vx*=.985;f.vy*=.985;f.life-=.010;
+    if(f.life<=0){fireworks.splice(i,1);continue;}
+    ctx.beginPath();ctx.arc(f.x,f.y,1.8*f.life+.5,0,Math.PI*2);
+    ctx.fillStyle=`rgba(${f.col[0]},${f.col[1]},${f.col[2]},${Math.min(1,f.life*1.05)})`;ctx.fill();
+  }
+}
+let lastFw=0;
+
+// ── persist ───────────────────────────────────────────────────────────────────
+const BST_KEY='drift_best_v3';
+const XP_KEY='drift_xp_v1';
+const CLS_KEY='drift_class_v1';
+const XP_PER_LEVEL=150;
+
+// The shared leaderboard. A standalone Worker rather than a /api/ route on
+// this origin, because Pages bindings cannot be set from the CLI and the KV
+// namespace has to be bound somewhere — same pattern as laserbrain and the
+// other services this site runs.
+const LB_BASE='https://phronesis-drift-scores.degibug.workers.dev';
+
+let personal_best=JSON.parse(localStorage.getItem(BST_KEY)||'{}');
+function saveBest(){localStorage.setItem(BST_KEY,JSON.stringify(personal_best));}
+let totalXP=parseInt(localStorage.getItem(XP_KEY)||'0');
+function saveXP(){localStorage.setItem(XP_KEY,String(totalXP));}
+let selectedClass=localStorage.getItem(CLS_KEY)||'VOID';
+function saveCls(){localStorage.setItem(CLS_KEY,selectedClass);}
+function getLevel(){return 1+Math.floor(totalXP/XP_PER_LEVEL);}
+function xpIntoLevel(){return totalXP%XP_PER_LEVEL;}
+
+// ── mode configs ──────────────────────────────────────────────────────────────
+const MODE_CFG={
+  SOLO:  {secs:90,  ai:'none', glitch:false, gateSpd:1.0, label:'SOLO'},
+  '1V1': {secs:90,  ai:'vs',   glitch:false, gateSpd:1.0, label:'1V1'},
+  '2V2': {secs:90,  ai:'team', glitch:false, gateSpd:1.0, label:'2V2'},
+  ZEN:   {secs:180, ai:'none', glitch:false, gateSpd:0.7, label:'ZEN'},
+  BLITZ: {secs:45,  ai:'none', glitch:false, gateSpd:1.9, label:'BLITZ'},
+  GLITCH:{secs:60,  ai:'none', glitch:true,  gateSpd:1.2, label:'// GLITCH'},
+};
+const MLIST=['SOLO','1V1','2V2','ZEN','BLITZ','GLITCH'];
+const MDESC={
+  SOLO: 'pull particles through gates · no opponent',
+  '1V1':'you and the machine, matched',
+  '2V2':'you + partner meet two',
+  ZEN:  '3 min · no pressure · just flow',
+  BLITZ:'45s · fast gates · high tempo',
+  GLITCH:'60s · escalating chaos',
+};
+
+// ── class definitions ─────────────────────────────────────────────────────────
+const CLASSES={
+  VOID:{
+    name:'VOID', desc:'pull everything · all-field gravity',
+    color:'#e89050', pullMult:1.7, captureRange:95,
+    ability:'SINGULARITY', cooldown:6,
+    tip:'pulls all particles to cursor'
+  },
+  SURGE:{
+    name:'SURGE', desc:'speed · chain combos · blitz',
+    color:'#67e8f9', pullMult:1.0, captureRange:75,
+    ability:'CHAIN GATE', cooldown:8,
+    tip:'spawns a gate at your cursor'
+  },
+  PHASE:{
+    name:'PHASE', desc:'freeze gates · patience · control',
+    color:'#a78bfa', pullMult:1.1, captureRange:115,
+    ability:'FREEZE', cooldown:9,
+    tip:'all gates stop decaying for 4s'
+  },
+};
+function cls(){return CLASSES[selectedClass];}
+
+// ── state ─────────────────────────────────────────────────────────────────────
+let phase='READY', titlePhase='CLASS', mode='SOLO';
+let ROUND_SECS=99999, isGlitch=false, glitchIntensity=0; // endless
+let flashMsg='', flashEnd=0;
+
+// ── evolution ─────────────────────────────────────────────────────────────────
+let evolveLevel=0, evolvePrev=0, evolveFlash=0;
+function getEvolveLevel(sc){ return Math.floor(sc/15); }
+function evolveParams(){
+  const lv=evolveLevel;
+  return {
+    interval: Math.max(600, 2200 - lv*160),
+    maxGates: Math.min(14, 5 + lv),
+    decay:    0.0025 + lv*0.0004,
+    goldChance: Math.min(0.5, 0.15 + lv*0.03),
+    pullMult:   1 + lv*0.08,
+  };
+}
+
+// ── combo ─────────────────────────────────────────────────────────────────────
+let combo=1, lastScoreTime=0;
+const COMBO_WINDOW=2200, COMBO_MULTS=[1,2,3,5,10];
+let scoreFlash={t:0,warm:true}, comboAnim={t:0,mult:1};
+let roundPeakMult=1;  // best chain multiplier this round, for the share card
+
+// ── ability ───────────────────────────────────────────────────────────────────
+let abilityCdLeft=0, abilityActive=false, abilityTimer=0;
+let freezeActive=false, freezeTimer=0;
+let levelUpFlash=0, prevLevel=0;
+
+// ── particles ─────────────────────────────────────────────────────────────────
+const N=220;
+
+/* ── warmth is a body ──────────────────────────────────────────────────────────
+   Three things follow from a particle being warm rather than merely coloured.
+
+   It breathes. A resting mammal cycles about every four seconds, so warm
+   particles swell and settle on that period, each on its own phase — a field of
+   warm particles should look like many bodies, not one metronome. Amplitude
+   scales with warmth, so a barely-warm particle barely moves.
+
+   It perspires. Warm bodies shed heat by giving up water, and this field
+   already cooled — team decays every frame at .998. The vapour is that decay
+   made visible rather than a new rule: a particle sheds motes in proportion to
+   how warm it is, and the cooling those motes stand for was always happening.
+
+   And mass gathers mass. Free particles fall toward whatever is near them, so
+   the field clumps on its own instead of staying an even scatter. Clusters are
+   worth collecting.
+
+   Gravity here is grid-local rather than every-pair. 220 particles is 48,000
+   pairs a frame, which this cannot afford at 60fps; attracting each particle
+   toward the centroid of its own cell is linear and clumps just as convincingly.
+   Physics as staging, not simulation. */
+const BREATH_SECS=4;          // resting mammalian period
+const G_CELL=90;              // gravity/cluster cell, px
+const G_PULL=0.028;           // weak: the field should gather, not collapse
+const CLUSTER_MIN=6;          // particles in a cell before it reads as a cluster
+const CLUSTER_FREE=0.15;      // |team| below this counts as free-floating
+const VAPOUR_MAX=260;         // hard cap; this draws every frame
+
+let nowSec=0;                 // seconds since load, for breath phase
+const vapour=[];
+const grid=new Map();         // cellKey -> {sx,sy,n,st}
+const gkey=(x,y)=>((x/G_CELL)|0)+':'+((y/G_CELL)|0);
+
+function buildGrid(){
+  grid.clear();
+  for(const p of pts){
+    const k=gkey(p.x,p.y);
+    let c=grid.get(k);
+    if(!c){c={sx:0,sy:0,n:0,st:0};grid.set(k,c);}
+    c.sx+=p.x;c.sy+=p.y;c.n++;c.st+=p.team;
+  }
+}
+
+/* Collecting a cluster.
+   Gravity gathers free particles into clumps; bringing the attractor onto one
+   while pulling gathers it. Only free-floating clumps count — a cell whose
+   particles are already warm is one you just took, and it stays uncollectable
+   until it cools. That is what keeps this from being farmed in place, and it
+   needs no cooldown bookkeeping: the physics already tracks it.
+   Worth a little more than the same particles crossing a gate one at a time,
+   which is the point of gathering them. */
+function collectClusters(){
+  if(phase!=='PLAY'||!held||!playerSrc.active)return;
+  const cr=cls().captureRange;
+  for(const [k,c] of grid){
+    if(c.n<CLUSTER_MIN)continue;
+    if(Math.abs(c.st/c.n)>=CLUSTER_FREE)continue;      // not free — already claimed
+    const cx=c.sx/c.n, cy=c.sy/c.n;
+    if(Math.hypot(playerSrc.x-cx,playerSrc.y-cy)>cr)continue;
+
+    const pts_val=2+Math.floor(c.n/4);
+    const {mult,earned}=addScore(true,pts_val);
+    for(const p of pts){
+      if(gkey(p.x,p.y)!==k)continue;
+      p.team=Math.min(p.team+.85,1);                    // taken, and now warm
+      emitVapour(p.x,p.y,1);
+    }
+    sFlashes.push({x:cx,y:cy,t:1,hue:44,who:mult>1?`+${earned} x${mult}`:`+${earned}`});
+    ripples.push({x:cx,y:cy,r:0,a:.55,big:true});
+    Haptic.success();
+  }
+}
+
+function emitVapour(x,y,warmth){
+  if(vapour.length>=VAPOUR_MAX)return;
+  vapour.push({
+    x:x+(Math.random()-.5)*3, y:y+(Math.random()-.5)*3,
+    vx:(Math.random()-.5)*.22, vy:-.18-Math.random()*.24,  // vapour rises
+    a:.30+warmth*.22, r:.5+Math.random()*.9,
+  });
+}
+
+function updateVapour(){
+  for(let i=vapour.length-1;i>=0;i--){
+    const v=vapour[i];
+    v.x+=v.vx; v.y+=v.vy;
+    v.vy-=.004;               // keeps rising as it thins
+    v.a*=.972; v.r+=.045;     // spreads as it fades, like breath on cold air
+    if(v.a<.012){vapour.splice(i,1);continue;}
+    ctx.beginPath();ctx.arc(v.x,v.y,v.r,0,Math.PI*2);
+    ctx.fillStyle=`rgba(255,214,170,${v.a})`;ctx.fill();
+  }
+}
+
+class Particle{
+  constructor(i){this.id=i;this.spawn();}
+  spawn(){
+    this.x=Math.random()*W;this.y=Math.random()*H;
+    this.vx=(Math.random()-.5)*.5;this.vy=(Math.random()-.5)*.5;
+    this.r=.8+Math.random()*1.4;this.team=0;
+    this.ph=Math.random()*Math.PI*2;   // its own place in the breath cycle
+  }
+  update(){
+    const pm=cls().pullMult, cr=cls().captureRange;
+    for(const s of warmSrc){
+      if(!s.active)continue;
+      const dx=s.x-this.x,dy=s.y-this.y,d2=dx*dx+dy*dy+1,sd=Math.sqrt(d2);
+      // warm (player) pull, strengthened 2026-07-20: the cursor should suck in
+      // more, faster. Coefficient 90->150 and cap 1.2->2.0 accelerate particles
+      // toward the attractor; the .06 team-gain (was .04) commits them to your
+      // mass sooner once inside captureRange. The cold loop below is untouched,
+      // so this is a player-side change, not a global speed-up.
+      const f=Math.min(s.charge*150*pm/d2,2.0*pm);
+      this.vx+=dx/sd*f;this.vy+=dy/sd*f;
+      if(sd<cr)this.team=Math.min(this.team+.06,1);
+    }
+    for(const s of coldSrc){
+      if(!s.active)continue;
+      const dx=s.x-this.x,dy=s.y-this.y,d2=dx*dx+dy*dy+1,sd=Math.sqrt(d2);
+      const f=Math.min(s.charge*90/d2,1.2);
+      this.vx+=dx/sd*f;this.vy+=dy/sd*f;
+      if(sd<60)this.team=Math.max(this.team-.04,-1);
+    }
+    /* gravity — fall toward whatever mass is nearby.
+       Scaled by how many neighbours share the cell, so a lone particle drifts
+       and a crowd draws hard. Warm particles feel it less: they are already
+       being steered, and letting gravity fight the attractor made the field
+       feel soupy rather than alive. */
+    const gc=grid.get(gkey(this.x,this.y));
+    if(gc&&gc.n>1){
+      const cx=gc.sx/gc.n, cy=gc.sy/gc.n;
+      const dx=cx-this.x, dy=cy-this.y;
+      const d=Math.sqrt(dx*dx+dy*dy)+.001;
+      const g=G_PULL*Math.min(gc.n-1,10)*(1-Math.abs(this.team)*.6);
+      this.vx+=dx/d*g; this.vy+=dy/d*g;
+    }
+
+    // perspiration: the cooling on the next line, made visible
+    if(this.team>.25&&Math.random()<this.team*.05)emitVapour(this.x,this.y,this.team);
+
+    this.team*=.998;
+    this.vx*=.975;this.vy*=.975;
+    if(isGlitch&&Math.random()<glitchIntensity*.04){
+      this.x+=(Math.random()-.5)*40;this.y+=(Math.random()-.5)*40;
+    }
+    this.x+=this.vx;this.y+=this.vy;
+    if(this.x<0)this.x+=W;if(this.x>W)this.x-=W;
+    if(this.y<0)this.y+=H;if(this.y>H)this.y-=H;
+  }
+  get hue(){
+    if(this.team>.1)return 38+this.team*10;
+    if(this.team<-.1)return 188-this.team*10;
+    return 140;
+  }
+  get bright(){return 55+Math.abs(this.team)*20;}
+  draw(){
+    /* anything warm is breathing. Amplitude rides on warmth, so a cold or
+       neutral particle is perfectly still and a fully warm one swells by about
+       a third. Each carries its own phase — a warm field should read as many
+       bodies, not one metronome. */
+    let r=this.r;
+    if(this.team>.1){
+      const b=Math.sin(nowSec*(Math.PI*2/BREATH_SECS)+this.ph);
+      r*=1+b*.34*this.team;
+    }
+    ctx.beginPath();ctx.arc(this.x,this.y,r,0,Math.PI*2);
+    ctx.fillStyle=`hsl(${this.hue},100%,${this.bright}%)`;ctx.fill();
+  }
+}
+const pts=Array.from({length:N},(_,i)=>new Particle(i));
+
+// ── gates ─────────────────────────────────────────────────────────────────────
+const gates=[];
+let lastGt=0;
+class Gate{
+  constructor(cx_,cy_){
+    const m=80;
+    const cx=cx_!==undefined?cx_:m+Math.random()*(W-m*2);
+    const cy=cy_!==undefined?cy_:m+Math.random()*(H-m*2);
+    const ang=Math.random()*Math.PI,len=44+Math.random()*36;
+    this.x1=cx+Math.cos(ang)*len;this.y1=cy+Math.sin(ang)*len;
+    this.x2=cx-Math.cos(ang)*len;this.y2=cy-Math.sin(ang)*len;
+    this.cx=cx;this.cy=cy;
+    const ep=evolveParams();
+    this.life=1;this.decay=ep.decay+Math.random()*.001;
+    this.seen=new Set();this.flash=0;this.flashTeam=0;
+    this.gold=Math.random()<ep.goldChance;
+  }
+  update(){
+    const gcfg=MODE_CFG[mode];
+    const decayMult=gcfg.glitch?1+glitchIntensity*.5:1;
+    if(!freezeActive)this.life-=this.decay*decayMult;
+    if(this.flash>0)this.flash-=.06;
+  }
+  draw(){
+    const a=this.life,fc=this.flash;
+    const pulse=.65+.35*Math.sin(Date.now()*.004);
+    const glowCol=this.gold?'#ffd028':'#00ff88';
+    const col=fc>0?(this.flashTeam>0?`rgba(255,176,0,${a})`:`rgba(0,200,255,${a})`)
+              :(this.gold?`rgba(255,210,40,${a*.9})`:`rgba(0,255,136,${a*.7*pulse})`);
+    ctx.beginPath();ctx.moveTo(this.x1,this.y1);ctx.lineTo(this.x2,this.y2);
+    ctx.strokeStyle=col;ctx.lineWidth=1.5+fc*2+(this.gold?.8:0);
+    ctx.shadowColor=fc>0?(this.flashTeam>0?'#ffb000':'#00ccff'):glowCol;
+    ctx.shadowBlur=(this.gold?18:10)+fc*20;ctx.stroke();ctx.shadowBlur=0;
+    for(const[ex,ey]of[[this.x1,this.y1],[this.x2,this.y2]]){
+      ctx.beginPath();ctx.arc(ex,ey,3+fc*2,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();
+    }
+    if(this.gold&&fc===0){
+      ctx.textAlign='center';ctx.font='bold 8px monospace';
+      ctx.fillStyle=`rgba(255,210,40,${a*.5})`;
+      ctx.fillText('3x',this.cx,this.cy-8);ctx.textAlign='left';
+    }
+    if(freezeActive&&fc===0){
+      ctx.textAlign='center';ctx.font='7px monospace';
+      ctx.fillStyle=`rgba(167,139,250,${a*.5})`;
+      ctx.fillText('*',this.cx,this.cy+14);ctx.textAlign='left';
+    }
+  }
+  check(p,px,py){
+    if(this.seen.has(p.id))return null;
+    const[x1,y1,x2,y2]=[px,py,p.x,p.y],[x3,y3,x4,y4]=[this.x1,this.y1,this.x2,this.y2];
+    const den=(x1-x2)*(y3-y4)-(y1-y2)*(x3-x4);
+    if(Math.abs(den)<1e-6)return null;
+    const t=((x1-x3)*(y3-y4)-(y1-y3)*(x3-x4))/den;
+    const u=-((x1-x2)*(y1-y3)-(y1-y2)*(x1-x3))/den;
+    if(t>=0&&t<=1&&u>=0&&u<=1){this.seen.add(p.id);this.flash=1;this.flashTeam=p.team;return p.team;}
+    return null;
+  }
+  get dead(){return this.life<=0;}
+}
+
+// ── AI ────────────────────────────────────────────────────────────────────────
+class Ai{
+  constructor(side,role){
+    this.side=side;this.role=role;this.active=true;
+    this.x=W/2+(Math.random()-.5)*200;this.y=H/2+(Math.random()-.5)*200;
+    this.tx=this.x;this.ty=this.y;this.charge=0;
+    this.thinkTimer=Math.floor(Math.random()*40);
+  }
+  think(){
+    if(!gates.length)return;
+    if(this.role==='partner'){
+      let best=null,bestD=Infinity;
+      for(const g of gates){const d=Math.hypot(g.cx-mx,g.cy-my);if(d<bestD){bestD=d;best=g;}}
+      if(best){const dx=best.cx-mx,dy=best.cy-my,d=Math.hypot(dx,dy)||1;
+        this.tx=best.cx+(dx/d)*55+(Math.random()-.5)*25;
+        this.ty=best.cy+(dy/d)*55+(Math.random()-.5)*25;}
+    }else{
+      let best=null,bestScore=-Infinity;
+      for(const g of gates){
+        const prey=pts.filter(p=>{const d=Math.hypot(p.x-g.cx,p.y-g.cy);return d<120&&(this.side==='cold'?p.team>=-.2:p.team<=.2);}).length;
+        const dist=Math.hypot(this.x-g.cx,this.y-g.cy);
+        const s=prey*2-dist*.005+g.life*10;if(s>bestScore){bestScore=s;best=g;}
+      }
+      if(best){const refX=this.side==='cold'?mx:(coldSrc[0]?.x||W/2);const refY=this.side==='cold'?my:(coldSrc[0]?.y||H/2);
+        const dx=best.cx-refX,dy=best.cy-refY,d=Math.hypot(dx,dy)||1;
+        this.tx=best.cx+(dx/d)*40+(Math.random()-.5)*30;this.ty=best.cy+(dy/d)*40+(Math.random()-.5)*30;}
+    }
+  }
+  update(){
+    this.thinkTimer++;if(this.thinkTimer>40){this.thinkTimer=0;this.think();}
+    const dx=this.tx-this.x,dy=this.ty-this.y,d=Math.hypot(dx,dy)||1;
+    const spd=Math.min(d*.06,this.role==='partner'?3.0:3.5);
+    this.x+=(dx/d)*spd;this.y+=(dy/d)*spd;
+    this.charge=Math.min(this.charge+.035,.85);
+    this.x=Math.max(20,Math.min(W-20,this.x));this.y=Math.max(20,Math.min(H-20,this.y));
+  }
+  draw(){
+    if(this.role==='partner'){
+      ctx.save();ctx.translate(this.x,this.y);ctx.rotate(Math.PI/4);
+      const s=5+this.charge*8;ctx.beginPath();ctx.rect(-s/2,-s/2,s,s);
+      ctx.strokeStyle=`rgba(255,200,80,${this.charge*.55})`;ctx.lineWidth=1.5;ctx.stroke();ctx.restore();
+      ctx.beginPath();ctx.arc(this.x,this.y,2.5,0,Math.PI*2);ctx.fillStyle='rgba(255,200,80,0.7)';ctx.fill();
+    }else{
+      ctx.beginPath();ctx.arc(this.x,this.y,6+this.charge*12,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(0,200,255,${this.charge*.4})`;ctx.lineWidth=1;ctx.stroke();
+      ctx.beginPath();ctx.arc(this.x,this.y,3,0,Math.PI*2);ctx.fillStyle='rgba(0,200,255,0.6)';ctx.fill();
+    }
+  }
+}
+
+const playerSrc={x:0,y:0,charge:0,active:false};
+let warmSrc=[playerSrc],coldSrc=[],ais=[];
+let held=true,mx=W/2,my=H/2,charge=0,autoMode=true;
+const ripples=[];
+
+function burst(x,y){
+  for(const p of pts){
+    const dx=x-p.x,dy=y-p.y,d=Math.hypot(dx,dy)||1;
+    const f=Math.min(1200/d,10);
+    p.vx+=(dx/d)*f;p.vy+=(dy/d)*f;
+  }
+  ripples.push({x,y,r:0,a:.9,big:true});
+  if(J4)spawnFirework(x,y);
+}
+function down(x,y){held=true;mx=x;my=y;burst(x,y);ripples.push({x,y,r:0,a:.5});Haptic.tap();}
+function move(x,y){mx=x;my=y;}
+function up(){if(!autoMode){held=false;charge=0;}}
+
+let scoreW=0,scoreC=0;
+const sFlashes=[];
+
+function addScore(warm,pts_val){
+  const now=Date.now();
+  if(now-lastScoreTime<COMBO_WINDOW){combo=Math.min(combo+1,5);}else{combo=1;}
+  lastScoreTime=now;
+  const mult=COMBO_MULTS[combo-1];
+  if(mult>roundPeakMult)roundPeakMult=mult;
+  const earned=pts_val*mult;
+  if(warm){scoreW+=earned;}else if(mode!=='SOLO'&&mode!=='ZEN'&&mode!=='BLITZ'&&mode!=='GLITCH'){scoreC++;}
+  scoreFlash={t:1,warm};
+  // evolution check
+  const newLv=getEvolveLevel(scoreW);
+  if(newLv>evolveLevel){evolveLevel=newLv;evolveFlash=2.5;Haptic.success();}
+  if(mult>1){comboAnim={t:1,mult};Haptic.combo();}
+  else{Haptic.tap();}
+  updateHUD();
+  return{mult,earned};
+}
+
+// ── ability ───────────────────────────────────────────────────────────────────
+function fireAbility(){
+  const C=cls();
+  if(abilityCdLeft>0||phase!=='PLAY')return;
+  abilityCdLeft=C.cooldown;
+  Haptic.medium();
+
+  if(C.ability==='SINGULARITY'){
+    for(const p of pts){
+      const dx=mx-p.x,dy=my-p.y,d=Math.hypot(dx,dy)||1;
+      const f=Math.min(3000/d,25);
+      p.vx+=(dx/d)*f;p.vy+=(dy/d)*f;
+    }
+    ripples.push({x:mx,y:my,r:0,a:1,big:true});
+    ripples.push({x:mx,y:my,r:20,a:.8,big:true});
+    abilityActive=true;abilityTimer=1.5;
+  }else if(C.ability==='CHAIN GATE'){
+    const g=new Gate(mx,my);
+    g.life=1.2;g.decay=.002;
+    gates.push(g);
+    abilityActive=true;abilityTimer=.5;
+  }else if(C.ability==='FREEZE'){
+    freezeActive=true;freezeTimer=4;
+    abilityActive=true;abilityTimer=4;
+  }
+}
+
+// ── title ─────────────────────────────────────────────────────────────────────
+let hitAreas=[];
+
+function drawTitle(){
+  ctx.fillStyle='rgba(0,0,0,.92)';ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+
+  if(J4){
+    const word='DRIFT',cols=['rgba(255,70,70,.92)','rgba(255,255,255,.94)','rgba(96,152,255,.94)'];
+    ctx.font='bold 38px monospace';ctx.textAlign='left';
+    const lw=ctx.measureText(word).width;let lx=W/2-lw/2;
+    for(let i=0;i<word.length;i++){
+      const ch=word[i],cw=ctx.measureText(ch).width,col=cols[i%3];
+      ctx.fillStyle=col;ctx.shadowColor=col;ctx.shadowBlur=18;
+      ctx.fillText(ch,lx,H*.18);lx+=cw;
+    }
+    ctx.shadowBlur=0;ctx.textAlign='center';
+    ctx.font='9px monospace';ctx.fillStyle='rgba(255,255,255,.28)';
+    ctx.fillText('PHRONESIS · FIELD SPORT · IV•VII',W/2,H*.18+24);
+  }else{
+    ctx.shadowColor='rgba(232,144,80,.4)';ctx.shadowBlur=20;
+    ctx.font='bold 38px monospace';ctx.fillStyle='rgba(232,144,80,.85)';
+    ctx.fillText('DRIFT',W/2,H*.18);ctx.shadowBlur=0;
+    ctx.font='9px monospace';ctx.fillStyle='rgba(232,144,80,.22)';
+    ctx.fillText('PHRONESIS · FIELD SPORT',W/2,H*.18+24);
+  }
+
+  if(titlePhase==='CLASS'){drawClassSelect();}
+  else{drawModeSelect();}
+  ctx.textAlign='left';
+}
+
+function drawClassSelect(){
+  const lv=getLevel();
+  ctx.font='10px monospace';ctx.fillStyle='rgba(255,255,255,.2)';
+  ctx.fillText(`LV ${lv}  ·  ${totalXP} XP  ·  ${xpIntoLevel()}/${XP_PER_LEVEL} next`,W/2,H*.18+46);
+  ctx.font='8px monospace';ctx.fillStyle='rgba(255,255,255,.15)';
+  ctx.fillText('SELECT CLASS',W/2,H*.18+68);
+
+  hitAreas=[];
+  const clsKeys=Object.keys(CLASSES);
+  const bw=240,bh=62,gap=10;
+  const totalH=clsKeys.length*(bh+gap)-gap;
+  const sy=H/2-totalH/2-20;
+
+  clsKeys.forEach((ck,i)=>{
+    const C=CLASSES[ck];
+    const sel=ck===selectedClass;
+    const bx=W/2-bw/2,by=sy+i*(bh+gap);
+    hitAreas.push({type:'class',cls:ck,x:bx,y:by,w:bw,h:bh});
+    ctx.beginPath();ctx.roundRect(bx,by,bw,bh,4);
+    ctx.strokeStyle=sel?C.color:'rgba(255,255,255,.1)';
+    if(sel){ctx.shadowColor=C.color;ctx.shadowBlur=12;}
+    ctx.lineWidth=1;ctx.stroke();ctx.shadowBlur=0;
+    ctx.fillStyle=sel?`${C.color}18`:'transparent';ctx.fill();
+    ctx.font='bold 13px monospace';
+    ctx.fillStyle=sel?C.color:'rgba(255,255,255,.38)';
+    ctx.fillText(C.name,W/2,by+bh/2-10);
+    ctx.font='8px monospace';ctx.fillStyle='rgba(255,255,255,.22)';
+    ctx.fillText(C.desc,W/2,by+bh/2+5);
+    ctx.fillStyle='rgba(255,255,255,.14)';
+    ctx.fillText(`[${C.ability}  ${C.cooldown}s cd]  ${C.tip}`,W/2,by+bh/2+18);
+  });
+
+  const ny=sy+clsKeys.length*(bh+gap)+8;
+  const nw=140,nh=38,nx=W/2-nw/2;
+  hitAreas.push({type:'next',x:nx,y:ny,w:nw,h:nh});
+  ctx.beginPath();ctx.roundRect(nx,ny,nw,nh,4);
+  ctx.strokeStyle='rgba(232,144,80,.45)';ctx.lineWidth=1;ctx.stroke();
+  ctx.fillStyle='rgba(232,144,80,.08)';ctx.fill();
+  ctx.font='bold 12px monospace';ctx.fillStyle='rgba(232,144,80,.85)';
+  ctx.fillText('SELECT MODE →',W/2,ny+nh/2+4);
+}
+
+function drawModeSelect(){
+  const C=cls();
+  ctx.font='9px monospace';
+  ctx.globalAlpha=.4;
+  ctx.fillStyle=C.color;
+  ctx.fillText(`CLASS: ${C.name}  ·  LV ${getLevel()}`,W/2,H*.18+46);
+  ctx.globalAlpha=1;
+
+  hitAreas=[];
+  // two-column layout for 6 modes
+  const bw=168,bh=52,gap=10,colGap=12;
+  const cols=2,rows=Math.ceil(MLIST.length/cols);
+  const gridW=cols*bw+(cols-1)*colGap;
+  const gridH=rows*(bh+gap)-gap;
+  const sx=W/2-gridW/2;
+  const sy=H/2-gridH/2-10;
+
+  MLIST.forEach((m,i)=>{
+    const col=i%cols, row=Math.floor(i/cols);
+    const bx=sx+col*(bw+colGap);
+    const by=sy+row*(bh+gap);
+    const sel=m===mode;
+
+    // mode color
+    const mcolor=m==='ZEN'?'#60a5fa':m==='BLITZ'?'#fb923c':m==='GLITCH'?'#f0f':
+                 m==='1V1'?'rgba(0,200,255,1)':m==='2V2'?'rgba(110,231,183,1)':'rgba(232,144,80,1)';
+
+    hitAreas.push({mode:m,type:'mode',x:bx,y:by,w:bw,h:bh});
+    ctx.beginPath();ctx.roundRect(bx,by,bw,bh,4);
+    ctx.strokeStyle=sel?mcolor:'rgba(255,255,255,.1)';
+    if(sel){ctx.shadowColor=mcolor;ctx.shadowBlur=10;}
+    ctx.lineWidth=1;ctx.stroke();ctx.shadowBlur=0;
+    ctx.fillStyle=sel?mcolor.replace('1)','0.06)'):'rgba(255,255,255,.02)';ctx.fill();
+
+    ctx.font='bold 12px monospace';
+    ctx.fillStyle=sel?mcolor:'rgba(255,255,255,.5)';
+    ctx.fillText(m,bx+bw/2,by+bh/2-6);
+    ctx.font='7px monospace';ctx.fillStyle='rgba(255,255,255,.2)';
+    ctx.fillText(MDESC[m],bx+bw/2,by+bh/2+9);
+    if(personal_best[m]>0){
+      ctx.font='7px monospace';ctx.fillStyle='rgba(255,255,255,.14)';
+      ctx.fillText(`best ${personal_best[m]}`,bx+bw/2,by+bh/2+22);
+    }
+  });
+
+  const by2=sy+rows*(bh+gap)+10;
+  hitAreas.push({type:'back_class',x:W/2-60,y:by2,w:120,h:30});
+  ctx.font='8px monospace';ctx.fillStyle='rgba(255,255,255,.14)';
+  ctx.fillText('◀ change class',W/2,by2+18);
+}
+
+function titleClick(x,y){
+  for(const a of hitAreas){
+    if(x<a.x||x>a.x+a.w||y<a.y||y>a.y+a.h)continue;
+    if(a.type==='class'){selectedClass=a.cls;saveCls();Haptic.tap();return;}
+    if(a.type==='next'){titlePhase='MODE';Haptic.tap();return;}
+    if(a.type==='back_class'){titlePhase='CLASS';Haptic.tap();return;}
+    if(a.type==='mode'){mode=a.mode;startMode(a.mode);return;}
+  }
+}
+
+function updateHUD(){
+  const hasOpp=mode==='1V1'||mode==='2V2';
+  document.getElementById('sc-you').textContent=(mode==='2V2'?'US   ':'YOU  ')+String(scoreW).padStart(3,'0');
+  const opp=document.getElementById('sc-opp');
+  if(hasOpp){
+    opp.style.display='';
+    opp.textContent=(mode==='2V2'?'THEM ':'ME   ')+String(scoreC).padStart(3,'0');
+    opp.style.color='rgba(0,200,255,.5)';
+  }else{opp.style.display='none';}
+
+  const lv=getLevel();
+  document.getElementById('lv-label').textContent=`LV ${lv}`;
+  document.getElementById('cls-label').textContent=selectedClass;
+  document.getElementById('mode-hud').textContent=MODE_CFG[mode].label;
+  document.getElementById('ctrl-auto').textContent=autoMode?'AUTO':'HOLD';
+  document.getElementById('ctrl-auto').style.color=autoMode?'rgba(255,176,0,.55)':'rgba(255,255,255,.15)';
+
+  const aHud=document.getElementById('ability-hud');
+  const aLbl=document.getElementById('ability-label');
+  if(phase==='PLAY'){
+    aHud.style.display='block';
+    const C=cls();
+    if(abilityCdLeft>0){
+      aLbl.textContent=`${C.ability}  ${abilityCdLeft.toFixed(1)}s`;
+      aLbl.style.color='rgba(255,255,255,.18)';
+    }else{
+      aLbl.textContent=`TAP · ${C.ability}`;
+      aLbl.style.color=C.color+'cc';
+    }
+  }else{aHud.style.display='none';}
+}
+
+// ── ready countdown ───────────────────────────────────────────────────────────
+function startReady(){
+  const C=cls();
+  const ro=document.getElementById('ready-overlay');
+  ro.classList.remove('gone');
+  document.getElementById('ro-class-name').textContent=C.name;
+  document.getElementById('ro-class-name').style.color=C.color;
+  document.getElementById('ro-ability-txt').textContent=`${C.ability} · TAP to activate`;
+  document.getElementById('ro-mode-txt').textContent=MODE_CFG[mode].label+' · '+MODE_CFG[mode].secs+'s'+(J4?' · independence field':'');
+  const cnt=document.getElementById('ro-count');
+  let n=3;cnt.textContent=n;Haptic.light();
+  const iv=setInterval(()=>{
+    n--;
+    if(n<=0){clearInterval(iv);ro.classList.add('gone');startPlay();}
+    else{cnt.textContent=n;Haptic.light();}
+  },900);
+}
+
+function startPlay(){
+  phase='PLAY';
+  updateHUD();
+}
+
+function startMode(m){
+  const cfg=MODE_CFG[m];
+  mode=m;phase='READY';
+  ROUND_SECS=cfg.secs;
+  isGlitch=cfg.glitch;
+  glitchIntensity=0;
+  scoreW=0;scoreC=0;combo=1;lastScoreTime=0;roundPeakMult=1;
+  scoreFlash={t:0,warm:true};comboAnim={t:0,mult:1};
+  evolveLevel=0;evolveFlash=0;
+  abilityCdLeft=0;abilityActive=false;freezeActive=false;
+  prevLevel=getLevel();
+  gates.length=0;lastGt=0;sFlashes.length=0;ripples.length=0;
+  pts.forEach(p=>p.spawn());
+  warmSrc=[playerSrc];coldSrc=[];ais=[];
+  document.getElementById('score-hud').style.display='';
+  document.getElementById('end-overlay').classList.remove('show');
+
+  if(cfg.ai==='vs'){
+    const o=new Ai('cold','aggressor');coldSrc=[o];ais=[o];
+  }else if(cfg.ai==='team'){
+    const p=new Ai('warm','partner');
+    const o1=new Ai('cold','aggressor');
+    const o2=new Ai('cold','aggressor');o2.thinkTimer=22;
+    warmSrc=[playerSrc,p];coldSrc=[o1,o2];ais=[p,o1,o2];
+  }
+
+  startReady();
+}
+
+function restartMode(){
+  startMode(mode);
+}
+
+function backToTitle(){
+  phase='TITLE';titlePhase='CLASS';
+  document.getElementById('end-overlay').classList.remove('show');
+  document.getElementById('score-hud').style.display='none';
+  updateHUD();
+}
+
+function spawnEnemy(){
+  if(phase!=='PLAY')return;
+  const o=new Ai('cold','aggressor');
+  coldSrc.push(o);ais.push(o);
+}
+function spawnAlly(){
+  if(phase!=='PLAY')return;
+  const p=new Ai('warm','partner');
+  warmSrc.push(p);ais.push(p);
+}
+
+let roundTimer=0;
+
+function endRound(){
+  phase='END';
+  const xpGained=scoreW;
+  const lvBefore=getLevel();
+  totalXP+=xpGained;saveXP();
+  const lvAfter=getLevel();
+  const leveled=lvAfter>lvBefore;
+  if(leveled)Haptic.success();else Haptic.light();
+
+  const prev=personal_best[mode]||0;
+  if(scoreW>prev){personal_best[mode]=scoreW;saveBest();}
+
+  document.getElementById('end-score-val').textContent=String(scoreW).padStart(3,'0');
+  document.getElementById('end-xp-val').textContent=`+${xpGained} XP  ·  LV ${lvAfter}${leveled?' ^ LEVEL UP!':''}`;
+  const isBest=scoreW>=personal_best[mode]&&scoreW>0;
+  document.getElementById('end-best-val').textContent=isBest?'NEW BEST':'BEST  '+String(personal_best[mode]).padStart(3,'0');
+  document.getElementById('end-overlay').classList.add('show');
+  if(leveled)levelUpFlash=3;
+
+  if(scoreW>0){
+    fetch(LB_BASE+'/score',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({score:scoreW,cls:selectedClass})}).catch(()=>{});
+  }
+}
+
+// ── share card ────────────────────────────────────────────────────────────────
+// a pasteable emoji recap of the run. text/emoji beats screenshot beats link —
+// and the URL is burned in because "drift" is unsearchable on its own.
+const CLS_EMOJI={VOID:'🟠',SURGE:'🩵',PHASE:'🟣'};
+function buildShareText(){
+  const em=CLS_EMOJI[selectedClass]||'⚪';
+  const flames=roundPeakMult>1?`\nchain ${'🔥'.repeat(Math.min(10,roundPeakMult))} x${roundPeakMult}`:'';
+  const spark=J4?' 🎆':'';
+  return `DRIFT${spark} · ${MODE_CFG[mode].label}\n${em} ${selectedClass} · ${scoreW.toLocaleString()} pts · Lv${getLevel()}${flames}\nphronesis.world/drift`;
+}
+function shareToast(msg){
+  const s=document.getElementById('share-status');
+  if(!s)return;
+  s.textContent=msg;s.style.opacity='1';
+  setTimeout(()=>{s.style.opacity='0';},2200);
+}
+function copyShare(text){
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(()=>shareToast('copied — paste it anywhere')).catch(()=>shareToast('copy failed'));
+  }else{
+    try{const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';
+      document.body.appendChild(ta);ta.focus();ta.select();document.execCommand('copy');document.body.removeChild(ta);
+      shareToast('copied — paste it anywhere');}
+    catch(e){shareToast('copy failed');}
+  }
+}
+function shareRun(){
+  Haptic.light();
+  const text=buildShareText();
+  if(navigator.share){
+    navigator.share({text}).then(()=>shareToast('shared')).catch(()=>copyShare(text));
+  }else{
+    copyShare(text);
+  }
+}
+
+// ── input ─────────────────────────────────────────────────────────────────────
+function handleDown(x,y){
+  if(phase==='TITLE'){titleClick(x,y);return;}
+  if(phase==='READY')return;
+  if(phase==='END'){return;}
+  if(x<40&&y>H-50){restartMode();return;}
+  if(x>=40&&x<110&&y>H-50){autoMode=!autoMode;if(autoMode)held=true;else{held=false;charge=0;}Haptic.tap();updateHUD();return;}
+  down(x,y);
+}
+
+let lastTap=0;
+function handleDoubleTap(x,y){const now=Date.now();if(now-lastTap<350&&phase==='PLAY')fireAbility();lastTap=now;}
+
+c.addEventListener('mousedown',e=>handleDown(e.clientX,e.clientY));
+c.addEventListener('mousemove',e=>move(e.clientX,e.clientY));
+window.addEventListener('mouseup',up);
+/* Touch used to call handleDown() straight from touchstart, which made the
+   phone a harder game than the desktop one — and since the leaderboard is
+   shared, the two were being ranked against each other on unequal terms.
+
+   A mouse has three separate gestures: move (free aim, nothing happens),
+   click (burst), hold (sustained pull). A finger only reports position while
+   it is down, so all three collapsed into one: you could not reposition the
+   attractor without bursting first, and every ability double-tap cost two
+   bursts and threw off your aim.
+
+   So the same three gestures are recovered from one finger:
+     drag  — past a small threshold, pure aim, no burst  (= mousemove)
+     tap   — down and up quickly without moving, burst   (= click)
+     hold  — stay put past the delay, burst + pull       (= mouse held)
+
+   The thresholds are deliberately loose. A finger is not precise, and the
+   cost of guessing wrong is a burst the player did not ask for. */
+const DRAG_SLOP = 10;   // px of travel before it is aim, not a tap
+const HOLD_MS   = 130;  // finger still this long means a deliberate hold
+
+let touchStartX = 0, touchStartY = 0, touchStartT = 0;
+let touchMoved = false, touchEngaged = false, holdTimer = null;
+
+const cancelHold = () => { if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; } };
+
+// first real touch is the signal that this is a touch session
+window.addEventListener('touchstart', () => {
+  document.documentElement.dataset.touch = '1';
+}, {passive:true, once:true});
+
+c.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  touchStartX = t.clientX; touchStartY = t.clientY; touchStartT = Date.now();
+  touchMoved = false; touchEngaged = false;
+
+  // Menus and the title screen are taps on targets, not gameplay — they still
+  // need the immediate path or buttons would feel broken.
+  if (phase !== 'PLAY') { handleDoubleTap(t.clientX, t.clientY); handleDown(t.clientX, t.clientY); touchEngaged = true; return; }
+
+  handleDoubleTap(t.clientX, t.clientY);
+  move(t.clientX, t.clientY);          // aim follows the finger straight away
+  cancelHold();
+  holdTimer = setTimeout(() => { if (!touchMoved) { touchEngaged = true; handleDown(touchStartX, touchStartY); } }, HOLD_MS);
+}, {passive:false});
+
+c.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  if (Math.hypot(t.clientX - touchStartX, t.clientY - touchStartY) > DRAG_SLOP) {
+    touchMoved = true;
+    cancelHold();                      // it is a drag: aim only, never burst
+  }
+  move(t.clientX, t.clientY);
+}, {passive:false});
+
+c.addEventListener('touchend', e => {
+  e.preventDefault();
+  cancelHold();
+  // A quick, still touch is a tap — the finger equivalent of a click.
+  if (!touchEngaged && !touchMoved && Date.now() - touchStartT < HOLD_MS && phase === 'PLAY') {
+    handleDown(touchStartX, touchStartY);
+  }
+  up();
+  touchEngaged = false;
+}, {passive:false});
+window.addEventListener('keydown',e=>{if(e.code==='Space'&&phase==='PLAY'){e.preventDefault();fireAbility();}});
+
+// ── loop ──────────────────────────────────────────────────────────────────────
+let last=0;
+function loop(ts){
+  requestAnimationFrame(loop);
+  const dt=Math.min((ts-last)/1000,.05);last=ts;
+
+  if(phase==='TITLE'){drawTitle();return;}
+  if(phase==='READY'||phase==='END'){ctx.fillStyle='rgba(0,0,0,.1)';ctx.fillRect(0,0,W,H);return;}
+
+  roundTimer+=dt;
+  if(roundTimer>=ROUND_SECS){roundTimer=0;endRound();return;}
+
+  // glitch escalation
+  if(isGlitch)glitchIntensity=roundTimer/ROUND_SECS;
+
+  // timers
+  if(abilityCdLeft>0){abilityCdLeft=Math.max(0,abilityCdLeft-dt);updateHUD();}
+  if(abilityTimer>0){abilityTimer=Math.max(0,abilityTimer-dt);if(abilityTimer===0)abilityActive=false;}
+  if(freezeTimer>0){freezeTimer=Math.max(0,freezeTimer-dt);if(freezeTimer===0)freezeActive=false;}
+  if(levelUpFlash>0)levelUpFlash=Math.max(0,levelUpFlash-dt);
+
+  ctx.fillStyle='rgba(0,0,0,.16)';ctx.fillRect(0,0,W,H);
+  ctx.globalCompositeOperation='lighter';
+
+  if(autoMode){playerSrc.x=mx;playerSrc.y=my;}
+  playerSrc.active=held;
+  if(held){charge=Math.min(charge+.07,1);playerSrc.x=mx;playerSrc.y=my;playerSrc.charge=charge;}
+
+  ais.forEach(a=>a.update());
+
+  const now=Date.now();
+  const ep=evolveParams();
+  if(now-lastGt>ep.interval&&gates.length<ep.maxGates){gates.push(new Gate());lastGt=now;}
+  for(let i=gates.length-1;i>=0;i--){gates[i].update();gates[i].draw();if(gates[i].dead)gates.splice(i,1);}
+
+  if(J4){
+    if(now-lastFw>1200+Math.random()*1100){spawnFirework(70+Math.random()*(W-140),50+Math.random()*(H*.42));lastFw=now;}
+    updateFireworks();
+  }
+
+  nowSec=ts/1000;
+  buildGrid();
+  collectClusters();
+
+  const prevX=pts.map(p=>p.x),prevY=pts.map(p=>p.y);
+  pts.forEach((p,i)=>{
+    p.update();
+    for(const g of gates){
+      const team=g.check(p,prevX[i],prevY[i]);
+      if(team!==null){
+        const warm=team>=0;
+        const pts_val=g.gold?3:1;
+        const{mult,earned}=addScore(warm,pts_val);
+        const lbl=mode==='2V2'?(warm?'US':'THEM'):(warm?'YOU':'ME');
+        const tag=mult>1?`${lbl} x${mult}`:(g.gold?`${lbl} *`:lbl);
+        sFlashes.push({x:p.x,y:p.y,t:1,hue:warm?(g.gold?50:38):188,who:tag});
+      }
+    }
+    p.draw();
+  });
+
+  updateVapour();   // drawn after the particles so it reads as rising off them
+
+  for(let i=ripples.length-1;i>=0;i--){
+    const r=ripples[i];
+    r.r+=r.big?5+charge*4:2.5+charge*3;r.a*=r.big?.88:.9;
+    if(r.a<.01){ripples.splice(i,1);continue;}
+    ctx.beginPath();ctx.arc(r.x,r.y,r.r,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(255,176,0,${r.a*(r.big?.7:.5)})`;
+    ctx.lineWidth=r.big?2:1;ctx.stroke();
+  }
+  if(held&&charge>.05){
+    ctx.beginPath();ctx.arc(mx,my,6+charge*16,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(255,176,0,${charge*.35})`;ctx.lineWidth=1;ctx.stroke();
+  }
+  ais.forEach(a=>a.draw());
+
+  for(let i=sFlashes.length-1;i>=0;i--){
+    const f=sFlashes[i];f.t*=.86;
+    if(f.t<.02){sFlashes.splice(i,1);continue;}
+    ctx.font=`bold ${Math.round(10+(1-f.t)*8)}px monospace`;
+    ctx.fillStyle=`hsla(${f.hue},100%,75%,${f.t})`;
+    ctx.fillText(f.who,f.x+4,f.y-(1-f.t)*24);
+  }
+
+  ctx.globalCompositeOperation='source-over';
+
+  // glitch scanlines
+  if(isGlitch&&Math.random()<glitchIntensity*.18){
+    const gy=Math.random()*H;
+    ctx.fillStyle=`rgba(255,0,255,${glitchIntensity*.07})`;
+    ctx.fillRect(0,gy,W,1+Math.random()*3);
+  }
+  if(isGlitch&&glitchIntensity>.5&&Math.random()<(glitchIntensity-.5)*.2){
+    const gx=Math.random()*W*.3;
+    ctx.fillStyle=`rgba(0,255,255,${glitchIntensity*.04})`;
+    ctx.fillRect(gx,0,Math.random()*W*.1,H);
+  }
+
+  // score flash
+  if(scoreFlash.t>0){
+    const sg=ctx.createRadialGradient(W/2,H/2,H*.2,W/2,H/2,H*.75);
+    sg.addColorStop(0,'rgba(0,0,0,0)');
+    const fw=J4?(scoreFlash.warm?`rgba(255,64,64,${scoreFlash.t*.28})`:`rgba(92,150,255,${scoreFlash.t*.28})`)
+              :(scoreFlash.warm?`rgba(255,176,0,${scoreFlash.t*.28})`:`rgba(0,200,255,${scoreFlash.t*.28})`);
+    sg.addColorStop(1,fw);
+    ctx.fillStyle=sg;ctx.fillRect(0,0,W,H);
+    scoreFlash.t*=.82;
+  }
+
+  // combo badge
+  if(comboAnim.t>0){
+    ctx.textAlign='center';
+    ctx.font=`bold ${Math.round(28+comboAnim.t*14)}px monospace`;
+    ctx.fillStyle=J4?`rgba(255,255,255,${comboAnim.t*.97})`:`rgba(255,220,60,${comboAnim.t*.95})`;
+    ctx.shadowColor=J4?'rgba(92,150,255,.7)':'rgba(255,200,0,.6)';ctx.shadowBlur=20*comboAnim.t;
+    ctx.fillText(`x${comboAnim.mult}`,W/2,H/2-40);
+    ctx.shadowBlur=0;ctx.textAlign='left';
+    comboAnim.t*=.84;
+  }
+
+  // ability flash
+  if(abilityActive&&abilityTimer>0){
+    const C=cls();
+    ctx.fillStyle=`${C.color}18`;ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';ctx.font='bold 11px monospace';
+    ctx.fillStyle=C.color+'cc';
+    ctx.fillText(C.ability,W/2,H*.88);ctx.textAlign='left';
+  }
+
+  // freeze overlay
+  if(freezeActive){
+    ctx.fillStyle='rgba(167,139,250,.04)';ctx.fillRect(0,0,W,H);
+  }
+
+  // level-up flash
+  if(levelUpFlash>0){
+    const t=levelUpFlash/3;
+    ctx.fillStyle=`rgba(110,231,183,${t*.2})`;ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.font=`bold ${Math.round(22+t*12)}px monospace`;
+    ctx.fillStyle=`rgba(110,231,183,${t*.9})`;
+    ctx.shadowColor='rgba(110,231,183,.5)';ctx.shadowBlur=30*t;
+    ctx.fillText(`LV ${getLevel()} ^`,W/2,H/2-60);
+    ctx.shadowBlur=0;ctx.textAlign='left';
+  }
+
+  // evolution flash
+  if(evolveFlash>0){
+    evolveFlash=Math.max(0,evolveFlash-dt);
+    const t=evolveFlash/2.5;
+    ctx.fillStyle=`rgba(200,114,26,${t*.15})`;ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center';
+    ctx.font=`bold ${Math.round(18+t*10)}px monospace`;
+    ctx.fillStyle=`rgba(200,114,26,${t*.9})`;
+    ctx.shadowColor='rgba(200,114,26,.5)';ctx.shadowBlur=24*t;
+    ctx.fillText(`field ${evolveLevel}`,W/2,H/2-80);
+    ctx.shadowBlur=0;ctx.textAlign='left';
+  }
+
+  // evolve level indicator (subtle, bottom right)
+  if(evolveLevel>0){
+    ctx.font='7px Courier New';
+    ctx.fillStyle=`rgba(200,114,26,${0.12+evolveLevel*0.02})`;
+    ctx.textAlign='right';
+    ctx.fillText(`field ${evolveLevel}`,W-18,H-8);
+    ctx.textAlign='left';
+  }
+
+  // XP bar
+  const xpFrac=xpIntoLevel()/XP_PER_LEVEL;
+  ctx.fillStyle='rgba(110,231,183,.18)';
+  ctx.fillRect(0,H-4,W*xpFrac,2);
+
+  // timer bar — ZEN stays calm green, BLITZ urgent, GLITCH glitches
+  const tFrac=1-(roundTimer/ROUND_SECS);
+  let timerCol;
+  if(mode==='ZEN'){
+    timerCol='rgba(96,165,250,.15)';
+  }else if(mode==='BLITZ'){
+    timerCol=tFrac<.3?'rgba(255,80,40,.5)':tFrac<.5?'rgba(255,160,40,.35)':'rgba(251,146,60,.2)';
+  }else if(isGlitch){
+    timerCol=`rgba(255,0,255,${.1+glitchIntensity*.15})`;
+  }else{
+    timerCol=tFrac<.2?'rgba(255,80,40,.35)':tFrac<.4?'rgba(255,160,40,.2)':'rgba(232,144,80,.12)';
+  }
+  ctx.fillStyle=timerCol;ctx.fillRect(0,H-2,W*tFrac,2);
+
+  // unlock flash
+  if(flashMsg&&Date.now()<flashEnd){
+    const t=(flashEnd-Date.now())/3000;
+    ctx.textAlign='center';
+    ctx.font='bold 18px monospace';ctx.fillStyle=`rgba(0,255,136,${t*.9})`;
+    ctx.fillText(flashMsg,W/2,H/2);
+    ctx.textAlign='left';
+  }
+
+  // ability cooldown ring at cursor
+  if(abilityCdLeft>0){
+    const C=cls();const frac=abilityCdLeft/C.cooldown;
+    ctx.beginPath();ctx.arc(mx,my,22,-.5*Math.PI,-.5*Math.PI+Math.PI*2*(1-frac));
+    ctx.strokeStyle=C.color+'60';ctx.lineWidth=2;ctx.stroke();
+  }else if(phase==='PLAY'){
+    const C=cls();
+    ctx.beginPath();ctx.arc(mx,my,22,0,Math.PI*2);
+    ctx.strokeStyle=C.color+'30';ctx.lineWidth=1;ctx.stroke();
+  }
+}
+
+// init — skip title, start SOLO immediately
+if(J4){
+  const b=document.getElementById('brand');
+  b.textContent='phronesis · drift · iv·vii';
+  b.style.color='rgba(255,255,255,.4)';
+}
+prevLevel=getLevel();
+document.getElementById('ctrl-back').onclick=restartMode;
+document.getElementById('ctrl-auto').onclick=()=>{autoMode=!autoMode;if(autoMode)held=true;else{held=false;charge=0;}Haptic.tap();updateHUD();};
+
+/* Ability button (touch only — see the CSS note).
+   Uses touchstart rather than click so it fires on contact like the key does,
+   and stops the event so it never reaches the canvas as a burst. */
+(function(){
+  const btn=document.getElementById('ability-btn'), lbl=document.getElementById('ability-btn-label');
+  if(!btn) return;
+  const fire=e=>{e.preventDefault();e.stopPropagation();fireAbility();};
+  btn.addEventListener('touchstart',fire,{passive:false});
+  btn.addEventListener('click',fire);
+  // keep the label honest about what pressing it will do right now
+  setInterval(()=>{
+    const cooling=abilityCdLeft>0;
+    btn.dataset.cd=cooling?'1':'0';
+    lbl.textContent=cooling?Math.ceil(abilityCdLeft)+'s':(phase==='PLAY'?cls().ability:'ability');
+  },100);
+})();
+startMode('SOLO');
+requestAnimationFrame(ts=>{last=ts;roundTimer=0;requestAnimationFrame(loop);});
+
+fetch('/api/seen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ref:'driftgame'})}).catch(()=>{});
+
+// leaderboard — best score per class, shared by everyone playing.
+// Was pointed at /api/leaderboard and /api/free-score, neither of which was
+// ever written; both now live in the phronesis-drift-scores Worker, which is
+// where the DRIFT_SCORES KV namespace could actually be bound.
+function loadLB(){
+  fetch(LB_BASE+'/leaderboard').then(r=>r.json()).then(rows=>{
+    const el=document.getElementById('lb-rows');
+    if(!el) return;
+    if(!Array.isArray(rows)||!rows.length){el.textContent='';return;}
+    el.innerHTML=rows.slice(0,5).map((r,i)=>
+      `<div class="${r.name===selectedClass?'lb-me':''}">${i+1}  ${String(r.name||'').slice(0,10).padEnd(10,' ')}  ${r.best}</div>`
+    ).join('');
+  }).catch(()=>{});
+}
+loadLB();
+// Only poll while the tab is actually being looked at. This ran every 15s
+// forever regardless, which on a phone is radio wakeups for a board nobody
+// is watching.
+let lbTimer=setInterval(loadLB, 15000);
+document.addEventListener('visibilitychange',()=>{
+  clearInterval(lbTimer);
+  if(!document.hidden){loadLB();lbTimer=setInterval(loadLB, 15000);}
+});
+</script>
+<!--garden--><div data-garden-flora="wall" aria-hidden="true" style="height:128px;background:url(/garden-wall.svg) repeat-x left bottom;margin:48px 0 0"></div><div data-garden-flora="band-2" aria-hidden="true" style="height:128px;background:url(/garden-band-2.svg) repeat-x left bottom;margin:0px 0 -1px"></div><!--/garden--></body>
+</html>
