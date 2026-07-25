@@ -56,9 +56,15 @@ struct RootView: View {
                                                    cls: cls, server: s)
                               })
             case let .playing(seed, c, server):
-                GameView(seed: seed, cls: c, server: server) { score in
+                GameView(seed: seed, cls: c, server: server, name: playerName) { score in
                     if score > best { best = score }
-                    GameCenterBridge.shared.submit(score: score, leaderboard: GC.leaderboardBest)
+                    // Online scores go to their own board: a shared field with other players
+                    // pulling the same particles is not the same contest as a solo run, and
+                    // one leaderboard for both would make neither number mean anything.
+                    GameCenterBridge.shared.submit(
+                        score: score,
+                        leaderboard: server == nil ? GC.leaderboardBest : GC.leaderboardOnline)
+                    if server != nil { GameCenterBridge.shared.award(.online) }
                     Haptics.shared.roundEnd()
                     route = .over(score: score, cls: c)
                 }
@@ -189,7 +195,17 @@ struct GameView: UIViewRepresentable {
     let seed: UInt32
     let cls: PlayerClass
     let server: String?
+    let name: String
     let onEnd: (Int) -> Void
+
+    /// Holds the socket for the lifetime of the view. Without a coordinator the DriftNet
+    /// would be released the moment makeUIView returned and the connection would die
+    /// somewhere between "joined" and the first frame.
+    final class Coordinator {
+        var net: DriftNet?
+        deinit { net?.disconnect() }
+    }
+    func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SKView {
         let v = SKView()
@@ -199,13 +215,30 @@ struct GameView: UIViewRepresentable {
         v.showsFPS = false
         v.showsNodeCount = false
         v.ignoresSiblingOrder = true
+
         let scene = DriftScene(size: UIScreen.main.bounds.size, seed: seed,
                                playerClass: cls, onRoundEnd: onEnd)
         v.presentScene(scene)
+
+        if let server {
+            let net = DriftNet()
+            context.coordinator.net = net
+            scene.net = net
+            // The server's seed is authoritative. Presenting first and re-seeding on welcome
+            // means the player sees a field immediately instead of a black screen while the
+            // socket opens — and once welcome lands they are on everyone else's field.
+            net.onWelcome = { [weak scene] s in scene?.restart(seed: s) }
+            net.onRoundReset = { [weak scene] s in scene?.restart(seed: s) }
+            net.connect(server: server, name: name)
+        }
         return v
     }
 
     func updateUIView(_ v: SKView, context: Context) {}
+
+    static func dismantleUIView(_ v: SKView, coordinator: Coordinator) {
+        coordinator.net?.disconnect()
+    }
 }
 
 struct GameOverView: View {

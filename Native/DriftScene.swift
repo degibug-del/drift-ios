@@ -66,6 +66,13 @@ final class DriftScene: SKScene {
 
     private let onRoundEnd: (Int) -> Void
 
+    /// Non-nil in an online round. The scene never creates it — DriftApp connects and hands
+    /// it over already welcomed, so the scene can be built on the server's seed rather than
+    /// starting on a private field and jumping to the shared one a moment later.
+    var net: DriftNet?
+    private var remoteNodes: [String: RemoteNode] = [:]
+    private var boardLabel: SKLabelNode?
+
     init(size: CGSize, seed: UInt32, playerClass: PlayerClass, onRoundEnd: @escaping (Int) -> Void) {
         self.sim = DriftSim(seed: seed, playerClass: playerClass)
         self.onRoundEnd = onRoundEnd
@@ -115,6 +122,14 @@ final class DriftScene: SKScene {
         return l
     }
 
+    /// Re-seed onto a different field, keeping the class and the scene graph. Used when the
+    /// server sends its seed at welcome and again at every round rollover — from the
+    /// scene's side both are the same event: "you are now on this field, not that one".
+    func restart(seed: UInt32) {
+        sim = DriftSim(seed: seed, playerClass: sim.playerClass)
+        last = 0        // otherwise the next dt is the whole interval since the socket opened
+    }
+
     private func recomputeScale() {
         let s = min(size.width / FieldSize.width, size.height / FieldSize.height)
         fieldScale = s
@@ -160,10 +175,104 @@ final class DriftScene: SKScene {
         // a tap on every single particle would buzz continuously and mean nothing.
         if sim.captures.count >= 3 { Haptics.shared.tap(intensity: min(1, Double(sim.captures.count) / 20)) }
 
+        syncNetwork(dt: dt)
+
         scoreLabel.text = "\(sim.score)"
         comboLabel.text = sim.combo > 1.05 ? String(format: "×%.1f", sim.combo) : ""
         timerLabel.text = String(format: "%.0fs", max(0, sim.roundLength - sim.elapsed))
 
         if sim.isOver && !wasOver { onRoundEnd(sim.score) }
+    }
+
+    // ── multiplayer ──────────────────────────────────────────────────────────
+    private func syncNetwork(dt: TimeInterval) {
+        guard let net, net.connected else { return }
+
+        net.sendInput(sim.attractor, dt: dt)
+
+        // Claims are batched to one per frame rather than one per particle. The server
+        // checks each claim for proximity and recency, so a hundred messages a second would
+        // be rejected wholesale AND cost the battery — the count is the value.
+        if !sim.captures.isEmpty {
+            let mid = sim.captures.reduce(CGPoint.zero) {
+                CGPoint(x: $0.x + $1.x / CGFloat(sim.captures.count),
+                        y: $0.y + $1.y / CGFloat(sim.captures.count))
+            }
+            net.claim(at: mid, value: sim.captures.count)
+        }
+
+        // Reconcile the visible set against what arrived. Nodes are reused by id and only
+        // removed when an actor genuinely leaves, so a player who drops for one tick does
+        // not flicker out and back.
+        var seen = Set<String>()
+        for a in net.others {
+            seen.insert(a.id)
+            let node = remoteNodes[a.id] ?? {
+                let n = RemoteNode(name: a.name, isBot: a.isBot, hue: a.hue)
+                addChild(n)
+                remoteNodes[a.id] = n
+                return n
+            }()
+            // Interpolated, because the server ticks at 15Hz and we draw at 60. Snapping
+            // would make every other player look like they were teleporting.
+            let target = CGPoint(x: fieldOrigin.x + a.x * fieldScale,
+                                 y: fieldOrigin.y + a.y * fieldScale)
+            node.position = node.position == .zero ? target : CGPoint(
+                x: node.position.x + (target.x - node.position.x) * 0.25,
+                y: node.position.y + (target.y - node.position.y) * 0.25)
+        }
+        for (id, node) in remoteNodes where !seen.contains(id) {
+            node.removeFromParent()
+            remoteNodes.removeValue(forKey: id)
+        }
+
+        // The live board. Shown only online, since solo already has the score top-left.
+        if boardLabel == nil {
+            let l = hud(size: 11, weight: .regular)
+            l.horizontalAlignmentMode = .right
+            l.numberOfLines = 0
+            l.position = CGPoint(x: size.width - 22, y: size.height - 118)
+            addChild(l)
+            boardLabel = l
+        }
+        boardLabel?.text = net.board(limit: 5)
+            .map { "\($0.name)\($0.isBot ? " ·bot" : "")  \($0.score)" }
+            .joined(separator: "\n")
+    }
+}
+
+/// Another participant's attractor. A bot is drawn and labelled as a bot — passing them off
+/// as people would make a room look busier and is a claim the player can never check.
+final class RemoteNode: SKNode {
+    init(name: String, isBot: Bool, hue: String) {
+        super.init()
+        let ring = SKShapeNode(circleOfRadius: isBot ? 7 : 10)
+        ring.strokeColor = isBot ? UIColor(white: 0.68, alpha: 0.75) : UIColor(hex: hue)
+        ring.lineWidth = isBot ? 1.5 : 2.5
+        ring.fillColor = .clear
+        addChild(ring)
+
+        let label = SKLabelNode(fontNamed: "Menlo")
+        label.text = isBot ? "\(name) ·bot" : name
+        label.fontSize = 10
+        label.fontColor = UIColor(white: 0.8, alpha: isBot ? 0.45 : 0.8)
+        label.position = CGPoint(x: 0, y: 15)
+        addChild(label)
+    }
+    required init?(coder: NSCoder) { fatalError("not from a storyboard") }
+}
+
+extension UIColor {
+    /// The server sends CSS hex. Falls back to a readable blue rather than failing, because
+    /// a wrong colour must never cost the player sight of another player.
+    convenience init(hex: String) {
+        var s = hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        if s.count == 3 { s = s.map { "\($0)\($0)" }.joined() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else {
+            self.init(red: 0.23, green: 0.44, blue: 0.75, alpha: 1); return
+        }
+        self.init(red: CGFloat((v >> 16) & 0xFF) / 255,
+                  green: CGFloat((v >> 8) & 0xFF) / 255,
+                  blue: CGFloat(v & 0xFF) / 255, alpha: 1)
     }
 }
