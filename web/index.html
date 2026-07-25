@@ -8,12 +8,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="DRIFT">
 <meta name="theme-color" content="#000000">
-<link rel="manifest" href="manifest.webmanifest">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<link rel="icon" href="icons/icon-192.png" type="image/svg+xml">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="manifest" href="/drift/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/drift/icons/apple-touch-icon.png">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/drift/icons/icon-192.png">
 <title>DRIFT</title>
 <meta name="description" content="Drift — an arcade game: steer one line through a particle field, one run, one score. Browser-only.">
+<script src="mp.js"></script>
 <script>
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
@@ -25,6 +26,14 @@ if ('serviceWorker' in navigator) {
 *{margin:0;padding:0;box-sizing:border-box;}
 html,body{background:#000;overflow:hidden;width:100%;height:100%;touch-action:none;font-family:'Courier New',monospace;}
 canvas{display:block;position:fixed;inset:0;}
+/* The site's garden edge is injected into every page, and on this one it painted straight
+   over the game: the canvas is position:fixed with z-index auto, the garden divs come
+   later in the DOM, so they won. A brick wall and a row of flowers covered the top half of
+   a playfield.
+   Hidden rather than re-stacked. The garden decorates the bottom edge of a page you
+   scroll; this page is one fixed canvas with nothing to scroll, so there is no edge for it
+   to sit on and a z-index war would only move the problem. */
+[data-garden-flora]{display:none!important}
 
 #hud{position:fixed;inset:0;pointer-events:none;}
 
@@ -177,7 +186,7 @@ html[data-touch="1"] #ability-btn{ display:flex; }
 </head>
 <body>
 <h1 class="sr-only">DRIFT — the arcade</h1>
-
+<a href="/" style="position:fixed;top:14px;left:14px;z-index:99999;font:600 11px/1 ui-monospace,monospace;letter-spacing:.14em;text-transform:uppercase;color:#6f6f6f;background:rgba(0,0,0,0.45);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,0.18);border-radius:999px;padding:6px 12px;text-decoration:none">← phronesis</a>
 <canvas id="c"></canvas>
 
 <!-- The leaderboard panel. #lb-panel was styled and loadLB() has polled for it
@@ -202,7 +211,7 @@ html[data-touch="1"] #ability-btn{ display:flex; }
     <div id="cls-label" style="font-size:.5rem;opacity:.6"></div>
   </div>
   <div id="ability-hud" style="display:none">
-    <span id="ability-label">TAP · ABILITY</span>
+    <span id="ability-label">SPACE · ABILITY</span>
   </div>
   <div id="mode-hud"></div>
   <div id="ctrl-hud">
@@ -362,15 +371,23 @@ function xpIntoLevel(){return totalXP%XP_PER_LEVEL;}
 // ── mode configs ──────────────────────────────────────────────────────────────
 const MODE_CFG={
   SOLO:  {secs:90,  ai:'none', glitch:false, gateSpd:1.0, label:'SOLO'},
+  // Online rounds are server-timed: the Durable Object owns the clock so everyone in a
+  // room counts down together. secs here is only the fallback if the socket drops, and
+  // ai:'none' because the opponents are real — online bots run on the server, not here,
+  // or every client would simulate its own and they would all disagree.
+  ONLINE:{secs:90,  ai:'none', glitch:false, gateSpd:1.0, label:'ONLINE'},
   '1V1': {secs:90,  ai:'vs',   glitch:false, gateSpd:1.0, label:'1V1'},
   '2V2': {secs:90,  ai:'team', glitch:false, gateSpd:1.0, label:'2V2'},
   ZEN:   {secs:180, ai:'none', glitch:false, gateSpd:0.7, label:'ZEN'},
   BLITZ: {secs:45,  ai:'none', glitch:false, gateSpd:1.9, label:'BLITZ'},
   GLITCH:{secs:60,  ai:'none', glitch:true,  gateSpd:1.2, label:'// GLITCH'},
 };
-const MLIST=['SOLO','1V1','2V2','ZEN','BLITZ','GLITCH'];
+const MLIST=['SOLO','ONLINE','1V1','2V2','ZEN','BLITZ','GLITCH'];
 const MDESC={
   SOLO: 'pull particles through gates · no opponent',
+  // A mode needs an entry in THREE places — MLIST, MODE_CFG and here. Miss this one and
+  // the card still renders, with the word "undefined" where its description should be.
+  ONLINE: 'a shared field · real players and bots · pick a server',
   '1V1':'you and the machine, matched',
   '2V2':'you + partner meet two',
   ZEN:  '3 min · no pressure · just flow',
@@ -402,7 +419,13 @@ const CLASSES={
 function cls(){return CLASSES[selectedClass];}
 
 // ── state ─────────────────────────────────────────────────────────────────────
-let phase='READY', titlePhase='CLASS', mode='SOLO';
+// Opens on the menu, not mid-round. Diego, 2026-07-25: "rather than start a drift game
+// immediately, have the drift page open with a menu / online and offline modes."
+// It used to start at READY, which dropped a first-time visitor straight into a timed run
+// with no idea there were classes, modes, or other people playing.
+let phase='TITLE', titlePhase='CLASS', mode='SOLO';
+// The 3-2-1 countdown's interval id. Module-level so it can be cancelled — see toTitle().
+let countdownIv=null;
 let ROUND_SECS=99999, isGlitch=false, glitchIntensity=0; // endless
 let flashMsg='', flashEnd=0;
 
@@ -879,7 +902,7 @@ function drawModeSelect(){
     const sel=m===mode;
 
     // mode color
-    const mcolor=m==='ZEN'?'#60a5fa':m==='BLITZ'?'#fb923c':m==='GLITCH'?'#f0f':
+    const mcolor=m==='ONLINE'?'#44B08A':m==='ZEN'?'#60a5fa':m==='BLITZ'?'#fb923c':m==='GLITCH'?'#f0f':
                  m==='1V1'?'rgba(0,200,255,1)':m==='2V2'?'rgba(110,231,183,1)':'rgba(232,144,80,1)';
 
     hitAreas.push({mode:m,type:'mode',x:bx,y:by,w:bw,h:bh});
@@ -912,7 +935,20 @@ function titleClick(x,y){
     if(a.type==='class'){selectedClass=a.cls;saveCls();Haptic.tap();return;}
     if(a.type==='next'){titlePhase='MODE';Haptic.tap();return;}
     if(a.type==='back_class'){titlePhase='CLASS';Haptic.tap();return;}
-    if(a.type==='mode'){mode=a.mode;startMode(a.mode);return;}
+    if(a.type==='mode'){
+        // ONLINE detours through the lobby: you cannot start an online round without
+        // first choosing which server you are joining. Picking "solo instead" there
+        // falls back to SOLO rather than leaving the player on a dead title screen.
+        if(a.mode==='ONLINE'&&window.MP){
+          Haptic.tap();
+          MP.showLobby((serverId,name)=>{
+            if(!serverId){mode='SOLO';startMode('SOLO');return;}
+            MP.onwelcome=()=>{mode='ONLINE';startMode('ONLINE');};
+            MP.connect(serverId,name);
+          });
+          return;
+        }
+        mode=a.mode;startMode(a.mode);return;}
   }
 }
 
@@ -942,7 +978,7 @@ function updateHUD(){
       aLbl.textContent=`${C.ability}  ${abilityCdLeft.toFixed(1)}s`;
       aLbl.style.color='rgba(255,255,255,.18)';
     }else{
-      aLbl.textContent=`TAP · ${C.ability}`;
+      aLbl.textContent=`SPACE · ${C.ability}`;
       aLbl.style.color=C.color+'cc';
     }
   }else{aHud.style.display='none';}
@@ -955,15 +991,30 @@ function startReady(){
   ro.classList.remove('gone');
   document.getElementById('ro-class-name').textContent=C.name;
   document.getElementById('ro-class-name').style.color=C.color;
-  document.getElementById('ro-ability-txt').textContent=`${C.ability} · TAP to activate`;
+  document.getElementById('ro-ability-txt').textContent=`${C.ability} · SPACE to activate`;
   document.getElementById('ro-mode-txt').textContent=MODE_CFG[mode].label+' · '+MODE_CFG[mode].secs+'s'+(J4?' · independence field':'');
   const cnt=document.getElementById('ro-count');
   let n=3;cnt.textContent=n;Haptic.light();
-  const iv=setInterval(()=>{
+  // Held on a module-level handle so returning to the menu can cancel it. Without that,
+  // this timer outlives whatever started it: the startup path called startMode('SOLO') to
+  // initialise the field, immediately set phase='TITLE', and 2.7s later THIS interval fired
+  // startPlay() and dealt the player into a round they never chose. The menu was drawn
+  // correctly for three seconds and then silently replaced, which is why the phase looked
+  // right in the source and wrong on the screen.
+  clearInterval(countdownIv);
+  countdownIv=setInterval(()=>{
     n--;
-    if(n<=0){clearInterval(iv);ro.classList.add('gone');startPlay();}
+    if(n<=0){clearInterval(countdownIv);countdownIv=null;ro.classList.add('gone');startPlay();}
     else{cnt.textContent=n;Haptic.light();}
   },900);
+}
+
+/** Back to the menu, and cancel any countdown still in flight. */
+function toTitle(){
+  clearInterval(countdownIv);countdownIv=null;
+  document.getElementById('ready-overlay').classList.add('gone');
+  document.getElementById('score-hud').style.display='none';
+  phase='TITLE';titlePhase='CLASS';
 }
 
 function startPlay(){
@@ -1230,7 +1281,13 @@ function loop(ts){
     p.draw();
   });
 
-  updateVapour();   // drawn after the particles so it reads as rising off them
+  updateVapour();
+  // ── online ──────────────────────────────────────────────────────────────
+  // Two calls, and that is the whole of multiplayer inside the game loop. mp.js owns the
+  // socket, the lobby and the other players; this hands it the local attractor and asks it
+  // to draw everyone else. sendInput throttles itself to 20Hz internally, so calling it
+  // every frame is correct rather than wasteful.
+  if (window.MP && MP.connected) { MP.sendInput(mx, my); MP.draw(ctx); }   // drawn after the particles so it reads as rising off them
 
   for(let i=ripples.length-1;i>=0;i--){
     const r=ripples[i];
@@ -1404,7 +1461,14 @@ document.getElementById('ctrl-auto').onclick=()=>{autoMode=!autoMode;if(autoMode
     lbl.textContent=cooling?Math.ceil(abilityCdLeft)+'s':(phase==='PLAY'?cls().ability:'ability');
   },100);
 })();
+// Initialise a field, then STOP on the menu rather than playing it.
+//
+// startMode does the setup nothing else does — spawns the particles, clears the gates,
+// seeds warmSrc — so it still has to run. But it ends with phase='READY', which is why
+// setting `let phase='TITLE'` at the top had no effect: this line overwrote it 1000 lines
+// later and the game dealt you straight into a timed round.
 startMode('SOLO');
+toTitle();          // cancels the countdown startMode just armed — see toTitle()
 requestAnimationFrame(ts=>{last=ts;roundTimer=0;requestAnimationFrame(loop);});
 
 fetch('/api/seen',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ref:'driftgame'})}).catch(()=>{});
