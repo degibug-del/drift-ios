@@ -5,11 +5,20 @@
 // question is "how does the game behave", the answer is in DriftCore; if it is "what does
 // it look like", it is here. That separation is why the core can be tested at all.
 //
-// PARTICLES ARE ONE NODE, NOT NINE HUNDRED. The obvious port gives every particle an
-// SKSpriteNode and updates them each frame; at 900 particles that is 900 nodes with
-// per-node transform maths and it drops frames on older phones. Instead the whole field is
-// drawn into a single SKShapeNode-free custom node using one CGPath rebuilt per frame,
-// which is a single draw call. The field is uniform dots, so nothing is lost.
+// PARTICLES ARE ONE NODE, NOT NINE HUNDRED — AND THIS IS NOT YET JUSTIFIED.
+//
+// The field is drawn into one full-screen bitmap per frame and uploaded as a new SKTexture.
+// The original comment here claimed 900 SKSpriteNodes "drops frames on older phones". That
+// was asserted, never measured, and it is probably wrong: SpriteKit batches sprites sharing
+// one texture into a single draw call, which is exactly what this case is, and it allocates
+// nothing per frame.
+//
+// What IS measured: 60.0 fps with 7 nodes — on the SIMULATOR, which runs on a Mac's memory
+// bandwidth and says almost nothing about an iPhone. Allocating and uploading roughly 12MB
+// a frame is the kind of thing a Mac absorbs and a four-year-old phone does not.
+//
+// So this stands as the current implementation, not as the right one. Settling it needs a
+// device and both variants, and until then the comment should not pretend otherwise.
 
 import SpriteKit
 import UIKit
