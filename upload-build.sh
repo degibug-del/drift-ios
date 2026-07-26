@@ -58,17 +58,35 @@ esac
 read -r -p "upload this build? [y/N] " ok
 [ "$ok" = "y" ] || [ "$ok" = "Y" ] || { echo "stopped."; exit 0; }
 
-# -s keeps these off the screen and out of scrollback.
-read -rsp "App Store Connect Key ID: " KEY_ID; echo
-read -rsp "Issuer ID: " ISSUER_ID; echo
+# The Key ID is NOT a secret — it is literally the .p8's filename — so prompting for it
+# blind bought nothing and cost a silent failure: typed into a hidden field, one wrong
+# character produced "no key at …" and looked like the script had simply died. Read it off
+# the file instead, and only ask when the answer is genuinely ambiguous.
+KEYDIR="$HOME/.appstoreconnect/private_keys"
+mapfile -t KEYS < <(ls "$KEYDIR"/AuthKey_*.p8 2>/dev/null || true)
 
-[ -n "$KEY_ID" ] && [ -n "$ISSUER_ID" ] || { echo "both are required." >&2; exit 1; }
+if [ "${#KEYS[@]}" -eq 0 ]; then
+  echo "no API key found in $KEYDIR" >&2
+  echo "App Store Connect → Users and Access → Integrations → App Store Connect API," >&2
+  echo "generate a key with the App Manager role, then:" >&2
+  echo "  mkdir -p $KEYDIR && mv ~/Downloads/AuthKey_*.p8 $KEYDIR/" >&2
+  exit 1
+elif [ "${#KEYS[@]}" -eq 1 ]; then
+  KEYFILE="${KEYS[0]}"
+else
+  echo "more than one key in $KEYDIR — pick one:" >&2
+  select k in "${KEYS[@]}"; do KEYFILE="$k"; break; done
+  [ -n "${KEYFILE:-}" ] || exit 1
+fi
 
-KEYFILE="$HOME/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8"
-[ -f "$KEYFILE" ] || {
-  echo "no key at $KEYFILE" >&2
-  echo "move the downloaded .p8 there, named exactly AuthKey_<KEYID>.p8" >&2
-  exit 1; }
+KEY_ID=$(basename "$KEYFILE" .p8); KEY_ID="${KEY_ID#AuthKey_}"
+echo "  key     : $KEY_ID  (from $(basename "$KEYFILE"))"
+
+# The issuer id IS worth not echoing, and it is the only thing left to ask for. Trimmed,
+# because a pasted UUID picks up whitespace and the failure that produces is opaque.
+read -rsp "  Issuer ID (hidden, paste it): " ISSUER_ID; echo
+ISSUER_ID="$(printf '%s' "$ISSUER_ID" | tr -d '[:space:]')"
+[ -n "$ISSUER_ID" ] || { echo "an issuer id is required — it is on the same page as the key." >&2; exit 1; }
 
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
