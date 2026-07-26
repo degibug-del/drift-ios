@@ -159,6 +159,10 @@ public final class DriftSim {
     public private(set) var particles: [Particle] = []
     public private(set) var score: Int = 0
     public private(set) var combo: CGFloat = 1
+    /// Highest multiplier reached this round. The live `combo` decays, so an achievement
+    /// checked at round end against it would almost never fire — the player hit x6 forty
+    /// seconds ago and it has bled back to x1 by the time anyone looks.
+    public private(set) var peakCombo: CGFloat = 1
     public private(set) var elapsed: TimeInterval = 0
 
     /// Where the player's warm attractor is. The renderer sets this from touch.
@@ -408,6 +412,7 @@ public final class DriftSim {
             let moved = hypot(attractor.x - lastComboPoint.x, attractor.y - lastComboPoint.y)
             if moved > 120 {
                 combo = min(6, combo + 0.35)
+                peakCombo = max(peakCombo, combo)
                 lastComboPoint = attractor
             }
             comboDecay = 0

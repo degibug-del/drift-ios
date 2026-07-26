@@ -25,11 +25,40 @@ enum GC {
     static let leaderboardBest = "world.phronesis.drift.best"
     static let leaderboardOnline = "world.phronesis.drift.online"
 
+    /// Every one of these is awarded somewhere. That is not a given — three of the four
+    /// were declared here and granted nowhere, and `combo_10` could never have been earned
+    /// at all: the combo caps at x6, so a player chasing it would have been chasing a
+    /// number the simulation cannot produce. Renamed to what is actually reachable.
+    ///
+    /// Checked before creating the App Store Connect records, because an achievement that
+    /// exists in the store and never unlocks is the same lie as an ability card describing
+    /// something the game does not do.
     enum Achievement: String, CaseIterable {
-        case firstRun     = "world.phronesis.drift.first_run"
-        case combo10      = "world.phronesis.drift.combo_10"
-        case online       = "world.phronesis.drift.first_online"
-        case allClasses   = "world.phronesis.drift.all_classes"
+        /// Finish a round. Anyone who plays once earns it.
+        case firstRun    = "world.phronesis.drift.first_run"
+        /// Reach the maximum multiplier, x6.
+        case maxCombo    = "world.phronesis.drift.max_combo"
+        /// Finish a round online.
+        case online      = "world.phronesis.drift.first_online"
+        /// Finish a round with each of VOID, SURGE and PHASE.
+        case allClasses  = "world.phronesis.drift.all_classes"
+
+        var title: String {
+            switch self {
+            case .firstRun:   return "First Drift"
+            case .maxCombo:   return "Six Times Over"
+            case .online:     return "Not Alone"
+            case .allClasses: return "All Three"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .firstRun:   return "Finish a round."
+            case .maxCombo:   return "Reach a x6 multiplier."
+            case .online:     return "Finish a round on a shared field."
+            case .allClasses: return "Finish a round as VOID, SURGE and PHASE."
+            }
+        }
     }
 }
 

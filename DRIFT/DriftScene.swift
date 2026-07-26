@@ -73,7 +73,7 @@ final class DriftScene: SKScene {
     private var fieldScale: CGFloat = 1
     private var fieldOrigin: CGPoint = .zero
 
-    private let onRoundEnd: (Int, Int, Int) -> Void
+    private let onRoundEnd: (Int, Int, Int, CGFloat) -> Void
     private var rivalNodes: [SKShapeNode] = []
 
     /// Non-nil in an online round. The scene never creates it — DriftApp connects and hands
@@ -87,7 +87,7 @@ final class DriftScene: SKScene {
     private var shownRadius: CGFloat = 0
 
     init(size: CGSize, seed: UInt32, playerClass: PlayerClass, mode: Mode = .solo,
-         onRoundEnd: @escaping (Int, Int, Int) -> Void) {
+         onRoundEnd: @escaping (Int, Int, Int, CGFloat) -> Void) {
         self.sim = DriftSim(seed: seed, playerClass: playerClass, mode: mode)
         self.onRoundEnd = onRoundEnd
         super.init(size: size)
@@ -271,7 +271,7 @@ final class DriftScene: SKScene {
 
         drawRivals()
 
-        if sim.isOver && !wasOver { onRoundEnd(sim.score, sim.teamScore, sim.enemyScore) }
+        if sim.isOver && !wasOver { onRoundEnd(sim.score, sim.teamScore, sim.enemyScore, sim.peakCombo) }
     }
 
     /// Local AI attractors in 1V1 and 2V2. Allies are green and rivals red, because in 2V2

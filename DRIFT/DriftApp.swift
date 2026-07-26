@@ -63,6 +63,8 @@ struct RootView: View {
     // v2: the scoring model changed by a factor of ~18, so a best carried over from the
     // old one is unbeatable and reads as a bug. A new key retires it without deleting it.
     @AppStorage("drift_best_v2") private var best = 0
+    /// Comma-separated class names finished at least once — backs the all-classes award.
+    @AppStorage("drift_classes_played") private var classesPlayed = ""
 
     var body: some View {
         ZStack {
@@ -87,7 +89,7 @@ struct RootView: View {
                                                    cls: cls, mode: .online, server: s)
                               }) }
             case let .playing(seed, c, m, server):
-                GameView(seed: seed, cls: c, mode: m, server: server, name: playerName) { score, team, foe in
+                GameView(seed: seed, cls: c, mode: m, server: server, name: playerName) { score, team, foe, peak in
                     // Only SOLO feeds the personal best. A 180-second ZEN round and a
                     // 45-second BLITZ round are not comparable, and one "best" across all
                     // of them would just record which mode is longest.
@@ -98,7 +100,20 @@ struct RootView: View {
                     GameCenterBridge.shared.submit(
                         score: score,
                         leaderboard: server == nil ? GC.leaderboardBest : GC.leaderboardOnline)
+                    // Every achievement, awarded where it is actually earned. GameKit keeps
+                    // the maximum, so repeat reports are harmless and no caller has to track
+                    // what has already fired.
+                    GameCenterBridge.shared.award(.firstRun)
+                    if peak >= 6 { GameCenterBridge.shared.award(.maxCombo) }
                     if server != nil { GameCenterBridge.shared.award(.online) }
+                    // Class completion is remembered across launches, because "all three"
+                    // means all three ever, not all three in one sitting.
+                    var played = Set(classesPlayed.split(separator: ",").map(String.init))
+                    played.insert(c.name)
+                    classesPlayed = played.sorted().joined(separator: ",")
+                    if played.count >= PlayerClass.all.count {
+                        GameCenterBridge.shared.award(.allClasses)
+                    }
                     Haptics.shared.roundEnd()
                     route = .over(score: score, cls: c, mode: m, team: team, foe: foe)
                 }
@@ -312,7 +327,8 @@ struct GameView: UIViewRepresentable {
     let name: String
     /// (your score, your team's score, the opposing score) — the last two matter only in
     /// 1V1 and 2V2, and equal the first and zero elsewhere.
-    let onEnd: (Int, Int, Int) -> Void
+    /// (your score, team score, opposing score, peak combo this round)
+    let onEnd: (Int, Int, Int, CGFloat) -> Void
 
     /// Holds the socket for the lifetime of the view. Without a coordinator the DriftNet
     /// would be released the moment makeUIView returned and the connection would die
