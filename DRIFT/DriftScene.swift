@@ -52,10 +52,10 @@ final class DriftScene: SKScene {
 
     private var sim: DriftSim
     private let field = FieldNode()
-    private var attractorNode: SKShapeNode!
-    private var scoreLabel: SKLabelNode!
-    private var timerLabel: SKLabelNode!
-    private var comboLabel: SKLabelNode!
+    private var attractorNode: SKShapeNode?
+    private var scoreLabel: SKLabelNode?
+    private var timerLabel: SKLabelNode?
+    private var comboLabel: SKLabelNode?
     private var last: TimeInterval = 0
 
     /// Field-to-screen scale, letterboxed so the playable area is identical on every device.
@@ -91,27 +91,25 @@ final class DriftScene: SKScene {
 
         // The player's attractor. A ring rather than a dot: the capture radius is the thing
         // the player is actually aiming, so it should be the thing they can see.
-        attractorNode = SKShapeNode(circleOfRadius: sim.playerClass.captureRange * fieldScale)
-        attractorNode.strokeColor = UIColor(red: 0.91, green: 0.56, blue: 0.31, alpha: 0.55)
-        attractorNode.lineWidth = 1.5
-        attractorNode.fillColor = .clear
-        attractorNode.glowWidth = 3
-        addChild(attractorNode)
+        //
+        // Built through rebuildAttractor rather than inline, because didChangeSize can fire
+        // BEFORE didMove — SwiftUI lays the SKView out on its own schedule. Constructing a
+        // ring here as well left two on screen, the orphan sitting at the origin in the
+        // bottom-left corner. Seen on the simulator, not reasoned about.
+        rebuildAttractor()
 
         scoreLabel = hud(size: 34, weight: .semibold)
-        scoreLabel.horizontalAlignmentMode = .left
-        scoreLabel.position = CGPoint(x: 22, y: size.height - 58)
-        addChild(scoreLabel)
+        scoreLabel?.horizontalAlignmentMode = .left
+        addChild(scoreLabel!)
 
         comboLabel = hud(size: 15, weight: .regular)
-        comboLabel.horizontalAlignmentMode = .left
-        comboLabel.position = CGPoint(x: 22, y: size.height - 82)
-        addChild(comboLabel)
+        comboLabel?.horizontalAlignmentMode = .left
+        addChild(comboLabel!)
 
         timerLabel = hud(size: 18, weight: .regular)
-        timerLabel.horizontalAlignmentMode = .right
-        timerLabel.position = CGPoint(x: size.width - 22, y: size.height - 58)
-        addChild(timerLabel)
+        timerLabel?.horizontalAlignmentMode = .right
+        addChild(timerLabel!)
+        layoutHUD()
     }
 
     private func hud(size: CGFloat, weight: UIFont.Weight) -> SKLabelNode {
@@ -135,6 +133,49 @@ final class DriftScene: SKScene {
         fieldScale = s
         fieldOrigin = CGPoint(x: (size.width - FieldSize.width * s) / 2,
                               y: (size.height - FieldSize.height * s) / 2)
+    }
+
+    /// SpriteKit calls this whenever the scene resizes — including the FIRST real layout.
+    ///
+    /// This is load-bearing, not defensive. Inside SwiftUI's UIViewRepresentable the SKView
+    /// is created at zero size and laid out afterwards, so didMove(to:) runs against a 0x0
+    /// scene: fieldScale computes to 0, FieldNode.render early-returns on a zero-width
+    /// canvas, and the HUD lands at negative coordinates. The result is a completely black
+    /// screen with the game running perfectly behind it — no crash, no warning, nothing in
+    /// the log. Verified on the simulator before this existed.
+    override func didChangeSize(_ oldSize: CGSize) {
+        super.didChangeSize(oldSize)
+        guard size.width > 0, size.height > 0 else { return }
+        recomputeScale()
+        layoutHUD()
+        field.position = fieldOrigin
+        rebuildAttractor()
+    }
+
+    /// The ring's radius is baked into its path at construction, so a scene that was 0x0 at
+    /// didMove leaves a zero-radius circle behind. Rebuilt on every scale change rather than
+    /// scaled, because scaling a stroked shape scales its line width with it.
+    private func rebuildAttractor() {
+        guard fieldScale > 0 else { return }
+        let pos = attractorNode?.position
+        attractorNode?.removeFromParent()
+        let n = SKShapeNode(circleOfRadius: sim.playerClass.captureRange * fieldScale)
+        n.strokeColor = UIColor(red: 0.91, green: 0.56, blue: 0.31, alpha: 0.55)
+        n.lineWidth = 1.5
+        n.fillColor = .clear
+        n.glowWidth = 3
+        if let pos { n.position = pos }
+        addChild(n)
+        attractorNode = n
+    }
+
+    /// HUD positions depend on `size`, so they are set here rather than at construction and
+    /// re-applied on every resize — rotation included.
+    private func layoutHUD() {
+        scoreLabel?.position = CGPoint(x: 22, y: size.height - 58)
+        comboLabel?.position = CGPoint(x: 22, y: size.height - 82)
+        timerLabel?.position = CGPoint(x: size.width - 22, y: size.height - 58)
+        boardLabel?.position = CGPoint(x: size.width - 22, y: size.height - 118)
     }
 
     // ── input ────────────────────────────────────────────────────────────────
@@ -168,7 +209,7 @@ final class DriftScene: SKScene {
                      scale: fieldScale,
                      tint: UIColor(red: 0.42, green: 0.92, blue: 0.62, alpha: 0.9))
 
-        attractorNode.position = CGPoint(x: fieldOrigin.x + sim.attractor.x * fieldScale,
+        attractorNode?.position = CGPoint(x: fieldOrigin.x + sim.attractor.x * fieldScale,
                                          y: fieldOrigin.y + sim.attractor.y * fieldScale)
 
         // Haptics on capture, and only when a burst is big enough to feel deliberate —
@@ -177,9 +218,9 @@ final class DriftScene: SKScene {
 
         syncNetwork(dt: dt)
 
-        scoreLabel.text = "\(sim.score)"
-        comboLabel.text = sim.combo > 1.05 ? String(format: "×%.1f", sim.combo) : ""
-        timerLabel.text = String(format: "%.0fs", max(0, sim.roundLength - sim.elapsed))
+        scoreLabel?.text = "\(sim.score)"
+        comboLabel?.text = sim.combo > 1.05 ? String(format: "×%.1f", sim.combo) : ""
+        timerLabel?.text = String(format: "%.0fs", max(0, sim.roundLength - sim.elapsed))
 
         if sim.isOver && !wasOver { onRoundEnd(sim.score) }
     }
