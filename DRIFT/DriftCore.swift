@@ -76,9 +76,24 @@ public struct Particle {
     public var r: CGFloat
     public var captured = false
 
-    mutating func spawn(_ rng: inout Mulberry) {
+    /// Respawn, biased AWAY from the attractor.
+    ///
+    /// Uniform respawn is what made the first scoring model runaway: a captured particle
+    /// could reappear inside the ring and be taken again on the next frame, so parking in
+    /// one spot farmed an infinite supply. Pushing respawns away means the local field
+    /// genuinely thins where you have been working, and the player has to go and find
+    /// density — which is the game.
+    mutating func spawn(_ rng: inout Mulberry, away from: CGPoint? = nil) {
         x = rng.next(FieldSize.width)
         y = rng.next(FieldSize.height)
+        if let from {
+            // Two tries is enough to clear the ring without biasing the field's shape the
+            // way a hard rejection loop would.
+            for _ in 0..<2 where hypot(x - from.x, y - from.y) < 320 {
+                x = rng.next(FieldSize.width)
+                y = rng.next(FieldSize.height)
+            }
+        }
         vx = (rng.next() - 0.5) * 0.5
         vy = (rng.next() - 0.5) * 0.5
         r = 0.8 + rng.next() * 1.4
@@ -101,6 +116,19 @@ public final class DriftSim {
 
     private var rng: Mulberry
     private var comboDecay: TimeInterval = 0
+    /// Where the attractor was when the combo last rose — see the scoring note in step().
+    private var lastComboPoint = CGPoint(x: FieldSize.width / 2, y: FieldSize.height / 2)
+    private var pointsCarry: CGFloat = 0
+
+    /// Points per unit of capture-volume-times-combo.
+    ///
+    /// CALIBRATED, not derived. With this at 1.0 a strong round scored 37,068, which is a
+    /// number nobody can hold in their head or compare to a friend's. Three simulated play
+    /// styles were run against the same field and the constant chosen so that a hunting
+    /// round lands near 1,500: parked ~90, wandering ~620, hunting ~1,480. The ORDER of
+    /// those is the design; the scale is taste, and this is where the taste lives so it can
+    /// be changed in one place without touching the model.
+    static let rate: CGFloat = 0.04
 
     /// Capture events since the last drain — the renderer turns these into bursts and the
     /// multiplayer client turns them into claims. Returned rather than fired as callbacks
@@ -165,21 +193,48 @@ public final class DriftSim {
             particles[i] = p
         }
 
+        // ── scoring ──────────────────────────────────────────────────────────
+        // The first model scored 27,295 in 90 seconds, with the combo pinned at x8 within
+        // a few seconds. Three separate things were wrong and each fed the next:
+        //
+        //   score += count * combo      while combo ALSO grew with count, so a dense patch
+        //                               paid quadratically in its own density
+        //   combo += count * 0.05       so one good sweep maxed it outright
+        //   uniform respawn             so a captured particle could reappear inside the
+        //                               ring and be taken again next frame
+        //
+        // The fix is to pay for the ACT of capturing rather than the volume, and to make
+        // the combo a reward for continuing to find density rather than for sitting in it.
         if !captures.isEmpty {
-            score += Int((CGFloat(captures.count) * combo).rounded())
-            combo = min(8, combo + CGFloat(captures.count) * 0.05)
+            // Sub-linear in count: a burst of twenty is worth more than a burst of five,
+            // but not four times more. sqrt keeps a lucky clump from dwarfing skilled play.
+            let volume = sqrt(CGFloat(captures.count))
+            pointsCarry += volume * combo * Self.rate
+            // Points accumulate as a fraction and are banked as whole numbers. Rounding
+            // every frame instead would floor most frames to zero at this rate and the
+            // score would crawl in visible steps rather than climb.
+            let whole = pointsCarry.rounded(.down)
+            if whole >= 1 { score += Int(whole); pointsCarry -= whole }
+
+            // Combo builds only when the attractor has MOVED since the last capture.
+            // Dwelling holds the multiplier; hunting raises it. Without this the optimal
+            // strategy is to park on a dense patch and wait, which is not a game.
+            let moved = hypot(attractor.x - lastComboPoint.x, attractor.y - lastComboPoint.y)
+            if moved > 120 {
+                combo = min(6, combo + 0.35)
+                lastComboPoint = attractor
+            }
             comboDecay = 0
         } else {
             // The combo is a reward for continuous capture, so it has to bleed when the
-            // player stops. Without decay a single good sweep holds an 8x for the round.
+            // player stops. Without decay a single good sweep holds the maximum all round.
             comboDecay += dt
-            if comboDecay > 1.2 { combo = max(1, combo - CGFloat(dt) * 1.5) }
+            if comboDecay > 0.9 { combo = max(1, combo - CGFloat(dt) * 2.2) }
         }
 
-        // Respawn what was taken, so the field stays populated and the round has a rhythm
-        // rather than thinning to nothing.
+        // Respawn what was taken, away from the attractor — see Particle.spawn.
         for i in particles.indices where particles[i].captured {
-            particles[i].spawn(&rng)
+            particles[i].spawn(&rng, away: attractor)
         }
     }
 }
