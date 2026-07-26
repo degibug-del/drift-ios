@@ -22,8 +22,11 @@ import UIKit
 /// Leaderboard and achievement ids. These must match App Store Connect exactly — a typo
 /// here fails silently at submit time, which is the worst way for this to break.
 enum GC {
-    static let leaderboardBest = "world.phronesis.drift.best"
-    static let leaderboardOnline = "world.phronesis.drift.online"
+    /// Leaderboard ids live on `Mode.board`, one per mode — see the note there for why a
+    /// single shared board would have ranked the mode instead of the player. Nothing should
+    /// name a board here: routing through the mode is what keeps a new mode from silently
+    /// submitting into an existing board.
+    static var allLeaderboards: [String] { Mode.all.map(\.board) }
 
     /// Every one of these is awarded somewhere. That is not a given — three of the four
     /// were declared here and granted nowhere, and `combo_10` could never have been earned

@@ -123,21 +123,39 @@ public struct Mode: Equatable {
     /// Field instability: particles get random impulses, growing through the round.
     public let glitch: Bool
     public let blurb: String
+    /// The Game Center leaderboard this mode's scores go to. One board per mode, because the
+    /// modes are not comparable: ZEN runs 180 seconds and BLITZ runs 45, so a single shared
+    /// board would rank the mode a player chose rather than how well they played it — ZEN
+    /// would hold the whole top of the table by construction.
+    ///
+    /// Declared here, at the definition site, and with no default value on purpose: adding a
+    /// mode without a board is then a compile error rather than a silent fall-through to
+    /// someone else's board. SOLO keeps the id `...best` because that record already exists
+    /// in App Store Connect and ids cannot be renamed after creation — the id is never shown
+    /// to a player, only the localized title is, so the asymmetry costs nothing.
+    public let board: String
 
     public static let solo   = Mode(name: "SOLO",   seconds: 90,  rivals: 0, allies: 0, glitch: false,
-                                    blurb: "pull particles through the field · no opponent")
+                                    blurb: "pull particles through the field · no opponent",
+                                    board: "world.phronesis.drift.best")
     public static let online = Mode(name: "ONLINE", seconds: 90,  rivals: 0, allies: 0, glitch: false,
-                                    blurb: "a shared field · real players and bots")
+                                    blurb: "a shared field · real players and bots",
+                                    board: "world.phronesis.drift.online")
     public static let oneVone = Mode(name: "1V1",   seconds: 90,  rivals: 1, allies: 0, glitch: false,
-                                    blurb: "you and the machine, matched")
+                                    blurb: "you and the machine, matched",
+                                    board: "world.phronesis.drift.one_v_one")
     public static let twoVtwo = Mode(name: "2V2",   seconds: 90,  rivals: 3, allies: 1, glitch: false,
-                                    blurb: "you + partner meet two")
+                                    blurb: "you + partner meet two",
+                                    board: "world.phronesis.drift.two_v_two")
     public static let zen    = Mode(name: "ZEN",    seconds: 180, rivals: 0, allies: 0, glitch: false,
-                                    blurb: "3 min · no pressure · just flow")
+                                    blurb: "3 min · no pressure · just flow",
+                                    board: "world.phronesis.drift.zen")
     public static let blitz  = Mode(name: "BLITZ",  seconds: 45,  rivals: 0, allies: 0, glitch: false,
-                                    blurb: "45s · fast · high tempo")
+                                    blurb: "45s · fast · high tempo",
+                                    board: "world.phronesis.drift.blitz")
     public static let glitch = Mode(name: "GLITCH", seconds: 60,  rivals: 0, allies: 0, glitch: true,
-                                    blurb: "60s · the field will not hold still")
+                                    blurb: "60s · the field will not hold still",
+                                    board: "world.phronesis.drift.glitch")
 
     public static let all: [Mode] = [.solo, .online, .oneVone, .twoVtwo, .zen, .blitz, .glitch]
 }

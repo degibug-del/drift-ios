@@ -94,12 +94,11 @@ struct RootView: View {
                     // 45-second BLITZ round are not comparable, and one "best" across all
                     // of them would just record which mode is longest.
                     if m == .solo && score > best { best = score }
-                    // Online scores go to their own board: a shared field with other players
-                    // pulling the same particles is not the same contest as a solo run, and
-                    // one leaderboard for both would make neither number mean anything.
-                    GameCenterBridge.shared.submit(
-                        score: score,
-                        leaderboard: server == nil ? GC.leaderboardBest : GC.leaderboardOnline)
+                    // The same reasoning, carried all the way: every mode has its own board.
+                    // This used to be a two-way split on `server == nil`, which put SOLO, 1V1,
+                    // 2V2, ZEN, BLITZ and GLITCH on one table — the exact thing the line above
+                    // refuses to do for the personal best.
+                    GameCenterBridge.shared.submit(score: score, leaderboard: m.board)
                     // Every achievement, awarded where it is actually earned. GameKit keeps
                     // the maximum, so repeat reports are harmless and no caller has to track
                     // what has already fired.
@@ -183,7 +182,10 @@ struct MenuView: View {
                 Button {
                     if let root = UIApplication.shared.connectedScenes
                         .compactMap({ ($0 as? UIWindowScene)?.keyWindow?.rootViewController }).first {
-                        GameCenterBridge.shared.showDashboard(from: root, leaderboard: GC.leaderboardBest)
+                        // No id, so this opens the LIST of boards rather than one of them.
+                        // With a board per mode, dropping the player straight into SOLO would
+                        // hide the other six behind a back button they have no reason to press.
+                        GameCenterBridge.shared.showDashboard(from: root)
                     }
                 } label: {
                     Label("LEADERBOARD", systemImage: "trophy.fill").frame(maxWidth: .infinity)
