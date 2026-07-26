@@ -235,8 +235,13 @@ struct ModeView: View {
                 }
                 .padding(.horizontal, 20)
             }
-            Spacer(minLength: 20)
+            // Sizes to its content rather than filling the screen. A ScrollView expands to
+            // whatever it is given, which pinned the grid to the top of a 6.9-inch phone and
+            // left the bottom 45% empty — the centring in DriftPage had nothing to centre.
+            .scrollBounceBehavior(.basedOnSize)
+            .fixedSize(horizontal: false, vertical: true)
         }
+        .padding(.vertical, 24)
     }
 }
 
