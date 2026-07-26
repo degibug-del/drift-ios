@@ -73,7 +73,8 @@ final class DriftScene: SKScene {
     private var fieldScale: CGFloat = 1
     private var fieldOrigin: CGPoint = .zero
 
-    private let onRoundEnd: (Int) -> Void
+    private let onRoundEnd: (Int, Int, Int) -> Void
+    private var rivalNodes: [SKShapeNode] = []
 
     /// Non-nil in an online round. The scene never creates it — DriftApp connects and hands
     /// it over already welcomed, so the scene can be built on the server's seed rather than
@@ -85,8 +86,9 @@ final class DriftScene: SKScene {
     /// The radius the ring is currently drawn at — SURGE changes it mid-round.
     private var shownRadius: CGFloat = 0
 
-    init(size: CGSize, seed: UInt32, playerClass: PlayerClass, onRoundEnd: @escaping (Int) -> Void) {
-        self.sim = DriftSim(seed: seed, playerClass: playerClass)
+    init(size: CGSize, seed: UInt32, playerClass: PlayerClass, mode: Mode = .solo,
+         onRoundEnd: @escaping (Int, Int, Int) -> Void) {
+        self.sim = DriftSim(seed: seed, playerClass: playerClass, mode: mode)
         self.onRoundEnd = onRoundEnd
         super.init(size: size)
         scaleMode = .resizeFill
@@ -136,7 +138,7 @@ final class DriftScene: SKScene {
     /// server sends its seed at welcome and again at every round rollover — from the
     /// scene's side both are the same event: "you are now on this field, not that one".
     func restart(seed: UInt32) {
-        sim = DriftSim(seed: seed, playerClass: sim.playerClass)
+        sim = DriftSim(seed: seed, playerClass: sim.playerClass, mode: sim.mode)
         last = 0        // otherwise the next dt is the whole interval since the socket opened
     }
 
@@ -267,7 +269,30 @@ final class DriftScene: SKScene {
             (sim.abilityRemaining > 0 && sim.playerClass.name == "SURGE" ? 2.6 : 1.0)
         if abs(shownRadius - wantRadius) > 0.5 { shownRadius = wantRadius; rebuildAttractor() }
 
-        if sim.isOver && !wasOver { onRoundEnd(sim.score) }
+        drawRivals()
+
+        if sim.isOver && !wasOver { onRoundEnd(sim.score, sim.teamScore, sim.enemyScore) }
+    }
+
+    /// Local AI attractors in 1V1 and 2V2. Allies are green and rivals red, because in 2V2
+    /// you have to be able to tell at a glance who is helping — three identical rings would
+    /// make the mode unreadable.
+    private func drawRivals() {
+        guard !sim.rivals.isEmpty else { return }
+        while rivalNodes.count < sim.rivals.count {
+            let n = SKShapeNode(circleOfRadius: 88 * max(fieldScale, 0.001))
+            n.lineWidth = 2
+            n.fillColor = .clear
+            addChild(n)
+            rivalNodes.append(n)
+        }
+        for (i, r) in sim.rivals.enumerated() {
+            let n = rivalNodes[i]
+            n.strokeColor = r.ally ? UIColor(red: 0.43, green: 0.85, blue: 0.60, alpha: 0.5)
+                                   : UIColor(red: 0.91, green: 0.35, blue: 0.30, alpha: 0.5)
+            n.position = CGPoint(x: fieldOrigin.x + r.x * fieldScale,
+                                 y: fieldOrigin.y + r.y * fieldScale)
+        }
     }
 
     // ── multiplayer ──────────────────────────────────────────────────────────

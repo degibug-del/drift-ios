@@ -79,29 +79,78 @@ public struct Particle {
     public var r: CGFloat
     public var captured = false
 
-    /// Respawn, biased AWAY from the attractor.
+    /// Respawn, uniformly.
     ///
-    /// Uniform respawn is what made the first scoring model runaway: a captured particle
-    /// could reappear inside the ring and be taken again on the next frame, so parking in
-    /// one spot farmed an infinite supply. Pushing respawns away means the local field
-    /// genuinely thins where you have been working, and the player has to go and find
-    /// density — which is the game.
+    /// This was biased AWAY from the attractor, to stop a parked player farming an endless
+    /// supply. Measurement retired it. The bias was added before combo-requires-movement
+    /// existed, and once that landed it was doing the anti-farming job on its own — a
+    /// sweep of the away radius showed parking still loses by 13x at radius 0 (116 against
+    /// 1525 for a hunter).
+    ///
+    /// What the bias WAS still doing was making abilities counterproductive. Capturing more
+    /// thinned your own surroundings, so for a player working a small area a mass-capture
+    /// ability cost more than it paid: -27% for VOID at radius 320, -0% at 160, +3% at 0.
+    /// Two rules solving the same problem, and the redundant one was the expensive one.
     mutating func spawn(_ rng: inout Mulberry, away from: CGPoint? = nil) {
+        _ = from                       // kept in the signature; the bias itself is retired
         x = rng.next(FieldSize.width)
         y = rng.next(FieldSize.height)
-        if let from {
-            // Two tries is enough to clear the ring without biasing the field's shape the
-            // way a hard rejection loop would.
-            for _ in 0..<2 where hypot(x - from.x, y - from.y) < 320 {
-                x = rng.next(FieldSize.width)
-                y = rng.next(FieldSize.height)
-            }
-        }
         vx = (rng.next() - 0.5) * 0.5
         vy = (rng.next() - 0.5) * 0.5
         r = 0.8 + rng.next() * 1.4
         captured = false
     }
+}
+
+
+// ── modes ────────────────────────────────────────────────────────────────────
+/// What a mode actually changes. The web game has seven and they differ in four ways:
+/// round length, how many AI opponents share the field, whether those opponents are on
+/// your side, and whether the field is unstable.
+///
+/// Ported rather than invented — the round lengths are the web game's MODE_CFG values, so
+/// a player who knows DRIFT on the site finds the same rhythms here. GLITCH is the one
+/// that needed reinterpreting: the web version distorts the rendering, and distortion that
+/// only affects what you SEE is a renderer concern. Here it perturbs the field itself, so
+/// the simulation can be tested for it.
+public struct Mode: Equatable {
+    public let name: String
+    public let seconds: TimeInterval
+    /// Opponent attractors sharing the field and competing for the same particles.
+    public let rivals: Int
+    /// How many of those are on your side. Their captures count toward your team score.
+    public let allies: Int
+    /// Field instability: particles get random impulses, growing through the round.
+    public let glitch: Bool
+    public let blurb: String
+
+    public static let solo   = Mode(name: "SOLO",   seconds: 90,  rivals: 0, allies: 0, glitch: false,
+                                    blurb: "pull particles through the field · no opponent")
+    public static let online = Mode(name: "ONLINE", seconds: 90,  rivals: 0, allies: 0, glitch: false,
+                                    blurb: "a shared field · real players and bots")
+    public static let oneVone = Mode(name: "1V1",   seconds: 90,  rivals: 1, allies: 0, glitch: false,
+                                    blurb: "you and the machine, matched")
+    public static let twoVtwo = Mode(name: "2V2",   seconds: 90,  rivals: 3, allies: 1, glitch: false,
+                                    blurb: "you + partner meet two")
+    public static let zen    = Mode(name: "ZEN",    seconds: 180, rivals: 0, allies: 0, glitch: false,
+                                    blurb: "3 min · no pressure · just flow")
+    public static let blitz  = Mode(name: "BLITZ",  seconds: 45,  rivals: 0, allies: 0, glitch: false,
+                                    blurb: "45s · fast · high tempo")
+    public static let glitch = Mode(name: "GLITCH", seconds: 60,  rivals: 0, allies: 0, glitch: true,
+                                    blurb: "60s · the field will not hold still")
+
+    public static let all: [Mode] = [.solo, .online, .oneVone, .twoVtwo, .zen, .blitz, .glitch]
+}
+
+/// An AI attractor. Simpler than the server's bots on purpose: those coordinate with real
+/// players over a network, these only have to be worth playing against.
+public struct Rival {
+    public var x: CGFloat, y: CGFloat
+    public var score: Int = 0
+    public var ally: Bool
+    var tx: CGFloat, ty: CGFloat
+    var think: TimeInterval = 0
+    var skill: CGFloat
 }
 
 // ── the simulation ───────────────────────────────────────────────────────────
@@ -170,20 +219,68 @@ public final class DriftSim {
     /// be changed in one place without touching the model.
     static let rate: CGFloat = 0.04
 
+
     /// Capture events since the last drain — the renderer turns these into bursts and the
     /// multiplayer client turns them into claims. Returned rather than fired as callbacks
     /// so the simulation stays free of anything it has to know about.
     public private(set) var captures: [CGPoint] = []
 
+    public let mode: Mode
+    public private(set) var rivals: [Rival] = []
+    /// Your side's total when a mode has allies; equals `score` otherwise.
+    public var teamScore: Int { score + rivals.filter { $0.ally }.reduce(0) { $0 + $1.score } }
+    public var enemyScore: Int { rivals.filter { !$0.ally }.reduce(0) { $0 + $1.score } }
+
     public init(seed: UInt32, playerClass: PlayerClass = .void,
-                count: Int = 900, roundLength: TimeInterval = 90) {
+                count: Int = 900, mode: Mode = .solo) {
         self.rng = Mulberry(seed: seed)
         self.playerClass = playerClass
-        self.roundLength = roundLength
+        self.mode = mode
+        self.roundLength = mode.seconds
         particles = (0..<count).map { _ in
             var p = Particle(x: 0, y: 0, vx: 0, vy: 0, r: 1)
             p.spawn(&rng)
             return p
+        }
+        // Allies first, so index 0 is your partner in 2V2 and the UI can colour it.
+        for i in 0..<mode.rivals {
+            rivals.append(Rival(x: rng.next(FieldSize.width), y: rng.next(FieldSize.height),
+                                ally: i < mode.allies,
+                                tx: rng.next(FieldSize.width), ty: rng.next(FieldSize.height),
+                                skill: 0.45 + rng.next() * 0.4))
+        }
+    }
+
+    // ── opponents ───────────────────────────────────────────────────────────
+    /// Rivals hunt: they pick a target, run at it, and capture on the same terms you do.
+    /// Deliberately no smarter than that — an opponent that played optimally would win
+    /// every round, and the point is a contest rather than a demonstration.
+    private func stepRivals(_ dt: TimeInterval) {
+        guard !rivals.isEmpty else { return }
+        for i in rivals.indices {
+            var r = rivals[i]
+            r.think -= dt
+            if r.think <= 0 {
+                r.think = 0.8 + Double(rng.next()) * 1.6
+                r.tx = rng.next(FieldSize.width)
+                r.ty = rng.next(FieldSize.height)
+            }
+            let dx = r.tx - r.x, dy = r.ty - r.y
+            let d = max(hypot(dx, dy), 0.001)
+            let sp = (300 + r.skill * 420) * CGFloat(dt)
+            let k = min(1, sp / d)
+            r.x = max(0, min(FieldSize.width, r.x + dx * k))
+            r.y = max(0, min(FieldSize.height, r.y + dy * k))
+
+            // Same capture rule as the player, at the rival's own range.
+            let range2: CGFloat = 88 * 88
+            var took = 0
+            for j in particles.indices where !particles[j].captured {
+                let ddx = particles[j].x - r.x, ddy = particles[j].y - r.y
+                if ddx * ddx + ddy * ddy < range2 { particles[j].captured = true; took += 1 }
+            }
+            if took > 0 { r.score += max(1, Int((sqrt(CGFloat(took)) * Self.rate * 3).rounded())) }
+            rivals[i] = r
         }
     }
 
@@ -277,6 +374,19 @@ public final class DriftSim {
         // the combo a reward for continuing to find density rather than for sitting in it.
         let burst = pendingSingularity
         pendingSingularity = false
+        stepRivals(dt)
+
+        // GLITCH: the field will not hold still. Impulses grow through the round, so the
+        // last twenty seconds are genuinely harder than the first — an instability that is
+        // constant is just a different physics, not a mode.
+        if mode.glitch {
+            let intensity = CGFloat(elapsed / roundLength) * 34
+            for i in particles.indices where rng.next() < 0.02 {
+                particles[i].vx += (rng.next() - 0.5) * intensity
+                particles[i].vy += (rng.next() - 0.5) * intensity
+            }
+        }
+
         if !captures.isEmpty {
             // Sub-linear in count: a burst of twenty is worth more than a burst of five,
             // but not four times more. sqrt keeps a lucky clump from dwarfing skilled play.

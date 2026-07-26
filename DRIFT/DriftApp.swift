@@ -27,9 +27,10 @@ struct DriftApp: App {
 
 enum Route: Equatable {
     case menu
+    case modes
     case servers
-    case playing(seed: UInt32, cls: PlayerClass, server: String?)
-    case over(score: Int, cls: PlayerClass)
+    case playing(seed: UInt32, cls: PlayerClass, mode: Mode, server: String?)
+    case over(score: Int, cls: PlayerClass, mode: Mode, team: Int, foe: Int)
 }
 
 // ── root ─────────────────────────────────────────────────────────────────────
@@ -47,19 +48,28 @@ struct RootView: View {
             switch route {
             case .menu:
                 MenuView(cls: $cls, best: best,
-                         onSolo: { route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
-                                                    cls: cls, server: nil) },
+                         onPlay: { route = .modes },
                          onOnline: { route = .servers })
+            case .modes:
+                ModeView(onBack: { route = .menu },
+                         onPick: { m in
+                             if m == .online { route = .servers }
+                             else { route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
+                                                     cls: cls, mode: m, server: nil) }
+                         })
             case .servers:
                 ServerBrowser(name: $playerName,
                               onBack: { route = .menu },
                               onJoin: { s in
                                   route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
-                                                   cls: cls, server: s)
+                                                   cls: cls, mode: .online, server: s)
                               })
-            case let .playing(seed, c, server):
-                GameView(seed: seed, cls: c, server: server, name: playerName) { score in
-                    if score > best { best = score }
+            case let .playing(seed, c, m, server):
+                GameView(seed: seed, cls: c, mode: m, server: server, name: playerName) { score, team, foe in
+                    // Only SOLO feeds the personal best. A 180-second ZEN round and a
+                    // 45-second BLITZ round are not comparable, and one "best" across all
+                    // of them would just record which mode is longest.
+                    if m == .solo && score > best { best = score }
                     // Online scores go to their own board: a shared field with other players
                     // pulling the same particles is not the same contest as a solo run, and
                     // one leaderboard for both would make neither number mean anything.
@@ -68,13 +78,13 @@ struct RootView: View {
                         leaderboard: server == nil ? GC.leaderboardBest : GC.leaderboardOnline)
                     if server != nil { GameCenterBridge.shared.award(.online) }
                     Haptics.shared.roundEnd()
-                    route = .over(score: score, cls: c)
+                    route = .over(score: score, cls: c, mode: m, team: team, foe: foe)
                 }
                 .ignoresSafeArea()
-            case let .over(score, c):
-                GameOverView(score: score, best: best,
+            case let .over(score, c, m, team, foe):
+                GameOverView(score: score, best: best, mode: m, team: team, foe: foe,
                              onAgain: { route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
-                                                         cls: c, server: nil) },
+                                                         cls: c, mode: m, server: nil) },
                              onMenu: { route = .menu })
             }
         }
@@ -93,7 +103,7 @@ struct RootView: View {
 struct MenuView: View {
     @Binding var cls: PlayerClass
     let best: Int
-    let onSolo: () -> Void
+    let onPlay: () -> Void
     let onOnline: () -> Void
 
     var body: some View {
@@ -130,7 +140,7 @@ struct MenuView: View {
             }
 
             VStack(spacing: 10) {
-                Button(action: onSolo) { Label("PLAY", systemImage: "play.fill").frame(maxWidth: .infinity) }
+                Button(action: onPlay) { Label("PLAY", systemImage: "play.fill").frame(maxWidth: .infinity) }
                     .buttonStyle(PrimaryButton())
                 Button(action: onOnline) { Label("ONLINE", systemImage: "person.2.fill").frame(maxWidth: .infinity) }
                     .buttonStyle(SecondaryButton())
@@ -160,6 +170,68 @@ enum AbilityCopy {
         case "SURGE": return "surge · capture reach x2.6, 3s"
         case "PHASE": return "freeze · combo held + boosted, 4s"
         default:      return c.ability.lowercased()
+        }
+    }
+}
+
+/// The mode grid. Two columns on a phone, adaptive above — a seven-item list in one column
+/// runs off the bottom of a small screen, and a fixed two-column grid wastes an iPad.
+struct ModeView: View {
+    let onBack: () -> Void
+    let onPick: (Mode) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button(action: onBack) { Label("back", systemImage: "chevron.left") }
+                    .font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal, 20).padding(.top, 12)
+
+            Text("SELECT MODE").font(.system(size: 10, design: .monospaced)).tracking(2)
+                .foregroundStyle(.secondary).padding(.top, 18).padding(.bottom, 14)
+
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                    ForEach(Mode.all, id: \.name) { m in
+                        Button { Haptics.shared.tap(intensity: 0.4); onPick(m) } label: {
+                            VStack(spacing: 4) {
+                                Text(m.name).font(.system(size: 15, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(ModeColour.of(m))
+                                Text(m.blurb).font(.system(size: 10.5, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, minHeight: 74)
+                            .padding(.vertical, 10)
+                            .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.03)))
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12)))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(m.name). \(m.blurb). \(Int(m.seconds)) seconds.")
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            Spacer(minLength: 20)
+        }
+    }
+}
+
+/// One colour per mode, taken from the site's twelve wedges so the app and the web version
+/// name the same things the same way.
+enum ModeColour {
+    static func of(_ m: Mode) -> Color {
+        switch m.name {
+        case "SOLO":   return Color(red: 0.91, green: 0.56, blue: 0.31)
+        case "ONLINE": return Color(red: 0.27, green: 0.69, blue: 0.54)
+        case "1V1":    return Color(red: 0.23, green: 0.58, blue: 0.79)
+        case "2V2":    return Color(red: 0.43, green: 0.85, blue: 0.60)
+        case "ZEN":    return Color(red: 0.38, green: 0.65, blue: 0.98)
+        case "BLITZ":  return Color(red: 0.98, green: 0.58, blue: 0.24)
+        default:       return Color(red: 0.91, green: 0.30, blue: 0.61)
         }
     }
 }
@@ -210,9 +282,12 @@ struct SecondaryButton: ButtonStyle {
 struct GameView: UIViewRepresentable {
     let seed: UInt32
     let cls: PlayerClass
+    let mode: Mode
     let server: String?
     let name: String
-    let onEnd: (Int) -> Void
+    /// (your score, your team's score, the opposing score) — the last two matter only in
+    /// 1V1 and 2V2, and equal the first and zero elsewhere.
+    let onEnd: (Int, Int, Int) -> Void
 
     /// Holds the socket for the lifetime of the view. Without a coordinator the DriftNet
     /// would be released the moment makeUIView returned and the connection would die
@@ -233,7 +308,7 @@ struct GameView: UIViewRepresentable {
         v.ignoresSiblingOrder = true
 
         let scene = DriftScene(size: UIScreen.main.bounds.size, seed: seed,
-                               playerClass: cls, onRoundEnd: onEnd)
+                               playerClass: cls, mode: mode, onRoundEnd: onEnd)
         v.presentScene(scene)
 
         if let server {
@@ -259,13 +334,29 @@ struct GameView: UIViewRepresentable {
 
 struct GameOverView: View {
     let score: Int, best: Int
+    let mode: Mode, team: Int, foe: Int
     let onAgain: () -> Void, onMenu: () -> Void
+
+    /// In a contested mode the score alone does not say what happened — you can score well
+    /// and lose. The result line is the point of playing 1V1.
+    private var verdict: String? {
+        guard mode.rivals > 0 else { return nil }
+        if team > foe { return "you win  \(team) – \(foe)" }
+        if team < foe { return "you lose  \(team) – \(foe)" }
+        return "drawn  \(team) – \(foe)"
+    }
+
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
             Text("\(score)").font(.system(size: 64, weight: .bold, design: .monospaced))
                 .foregroundStyle(Color(red: 0.91, green: 0.56, blue: 0.31))
-            Text(score >= best ? "new best" : "best \(best)")
+            if let verdict {
+                Text(verdict).font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(team >= foe ? Color(red: 0.43, green: 0.85, blue: 0.60)
+                                                 : Color(red: 0.91, green: 0.45, blue: 0.35))
+            }
+            Text(mode == .solo ? (score >= best ? "new best" : "best \(best)") : mode.name)
                 .font(.system(size: 13, design: .monospaced)).foregroundStyle(.secondary)
             Spacer()
             VStack(spacing: 10) {
