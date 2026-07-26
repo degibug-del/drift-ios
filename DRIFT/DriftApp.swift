@@ -13,6 +13,28 @@
 import SwiftUI
 import SpriteKit
 
+/// Constrains a screen to a readable column and centres it.
+///
+/// Without this the iPad build stretched every control to the full 13-inch width and packed
+/// them into the top third, leaving 60% of the display empty — the phone layout scaled up,
+/// which is the usual way an iPad build looks unfinished. A class card 1400pt wide with
+/// twelve words on it is not a card.
+///
+/// 460pt is roughly the phone layout's natural width, so the design is the same on both and
+/// only the surrounding space changes. Vertical centring matters as much as the width: a
+/// column pinned to the top of a tall screen reads as a mistake even when it fits.
+struct DriftPage<Content: View>: View {
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            content.frame(maxWidth: 460)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 // ── app ──────────────────────────────────────────────────────────────────────
 @main
 struct DriftApp: App {
@@ -47,23 +69,23 @@ struct RootView: View {
             Color.black.ignoresSafeArea()
             switch route {
             case .menu:
-                MenuView(cls: $cls, best: best,
-                         onPlay: { route = .modes },
-                         onOnline: { route = .servers })
+                DriftPage { MenuView(cls: $cls, best: best,
+                                     onPlay: { route = .modes },
+                                     onOnline: { route = .servers }) }
             case .modes:
-                ModeView(onBack: { route = .menu },
+                DriftPage { ModeView(onBack: { route = .menu },
                          onPick: { m in
                              if m == .online { route = .servers }
                              else { route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
                                                      cls: cls, mode: m, server: nil) }
-                         })
+                         }) }
             case .servers:
-                ServerBrowser(name: $playerName,
+                DriftPage { ServerBrowser(name: $playerName,
                               onBack: { route = .menu },
                               onJoin: { s in
                                   route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
                                                    cls: cls, mode: .online, server: s)
-                              })
+                              }) }
             case let .playing(seed, c, m, server):
                 GameView(seed: seed, cls: c, mode: m, server: server, name: playerName) { score, team, foe in
                     // Only SOLO feeds the personal best. A 180-second ZEN round and a
@@ -82,10 +104,10 @@ struct RootView: View {
                 }
                 .ignoresSafeArea()
             case let .over(score, c, m, team, foe):
-                GameOverView(score: score, best: best, mode: m, team: team, foe: foe,
+                DriftPage { GameOverView(score: score, best: best, mode: m, team: team, foe: foe,
                              onAgain: { route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
                                                          cls: c, mode: m, server: nil) },
-                             onMenu: { route = .menu })
+                             onMenu: { route = .menu }) }
             }
         }
         .onAppear {
@@ -122,7 +144,6 @@ struct MenuView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .padding(.top, 40)
 
             VStack(spacing: 10) {
                 Text("SELECT CLASS")
@@ -155,9 +176,8 @@ struct MenuView: View {
                 .buttonStyle(SecondaryButton())
             }
             .padding(.horizontal, 28)
-
-            Spacer()
         }
+        .padding(.vertical, 24)
     }
 }
 
