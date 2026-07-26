@@ -87,6 +87,28 @@ cat > "$TMP/ExportOptions.plist" <<PLIST
 </plist>
 PLIST
 
+# Pin the toolchain to the RELEASE Xcode, never a beta.
+#
+# Build 2 was archived by release Xcode 26.6 against the iOS 26.5 SDK — which meets
+# Apple's published requirement (Xcode 26+, iOS 26 SDK, effective 2026-04-28) — and was
+# still rejected with ITMS-90111 "Unsupported SDK or Xcode version". The one part of that
+# pipeline that was not release software was the UPLOADER: distribution went through
+# Xcode 27 beta 4's Organizer, because the release Xcode's GUI would not launch
+# (error -10664). Uploading through a beta stamps beta tooling onto the submission.
+#
+# So the toolchain is chosen here rather than inherited from whatever xcode-select
+# happens to point at, and a beta is refused outright instead of being discovered in a
+# rejection email a day later.
+RELEASE_XCODE="${LASERBRAIN_XCODE:-/Applications/Xcode.app}"
+if [ -d "$RELEASE_XCODE/Contents/Developer" ]; then
+  export DEVELOPER_DIR="$RELEASE_XCODE/Contents/Developer"
+fi
+XV=$("$DEVELOPER_DIR/usr/bin/xcodebuild" -version 2>/dev/null | head -1)
+case "$XV" in
+  *beta*|*Beta*) echo "REFUSING: $XV is a beta. Apple rejects submissions built or uploaded with beta tooling." >&2; exit 1;;
+esac
+echo "  toolchain: ${XV:-unknown}"
+
 echo
 echo "uploading — this takes a few minutes and says nothing while it works…"
 
