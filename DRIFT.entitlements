@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required because the app uses Game Center: seven leaderboards and four
+	     achievements are configured in App Store Connect, and GameKit will not
+	     authenticate without this entitlement in the signed binary.
+
+	     App Store Connect refuses the submission outright without it —
+	     "You must add the com.apple.developer.game-center key in Xcode" — so its
+	     absence is caught at submit time rather than at runtime.
+
+	     Lives at the project root, NOT inside DRIFT/. That folder is a
+	     PBXFileSystemSynchronizedRootGroup, so anything placed in it is swept into
+	     the target automatically; an entitlements file belongs to a build setting,
+	     not to the bundle. -->
+	<key>com.apple.developer.game-center</key>
+	<true/>
+</dict>
+</plist>
