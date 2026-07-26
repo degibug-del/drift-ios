@@ -37,7 +37,9 @@ struct RootView: View {
     @State private var route: Route = .menu
     @State private var cls: PlayerClass = .void
     @AppStorage("drift_name") private var playerName = ""
-    @AppStorage("drift_best") private var best = 0
+    // v2: the scoring model changed by a factor of ~18, so a best carried over from the
+    // old one is unbeatable and reads as a bug. A new key retires it without deleting it.
+    @AppStorage("drift_best_v2") private var best = 0
 
     var body: some View {
         ZStack {
@@ -122,7 +124,7 @@ struct MenuView: View {
                     }
                     .buttonStyle(.plain)
                     // Real accessibility, which drawn rectangles on a canvas cannot have.
-                    .accessibilityLabel("\(c.name). \(c.ability). Capture range \(Int(c.captureRange)).")
+                    .accessibilityLabel("\(c.name). \(AbilityCopy.blurb(for: c)).")
                     .accessibilityAddTraits(c == cls ? [.isSelected, .isButton] : .isButton)
                 }
             }
@@ -149,13 +151,27 @@ struct MenuView: View {
     }
 }
 
+/// One place for what each ability actually does, so the card, the accessibility label and
+/// the in-game readout cannot drift apart from each other or from the simulation.
+enum AbilityCopy {
+    static func blurb(for c: PlayerClass) -> String {
+        switch c.name {
+        case "VOID":  return "singularity · harvest everything near you"
+        case "SURGE": return "surge · capture reach x2.6, 3s"
+        case "PHASE": return "freeze · combo held + boosted, 4s"
+        default:      return c.ability.lowercased()
+        }
+    }
+}
+
 struct ClassCard: View {
     let c: PlayerClass
     let selected: Bool
     var body: some View {
         VStack(spacing: 3) {
             Text(c.name).font(.system(size: 15, weight: .semibold, design: .monospaced))
-            Text(c.ability.lowercased()).font(.system(size: 11, design: .monospaced))
+            Text(AbilityCopy.blurb(for: c)).font(.system(size: 11, design: .monospaced))
+                .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)

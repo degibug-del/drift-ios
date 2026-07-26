@@ -81,6 +81,9 @@ final class DriftScene: SKScene {
     var net: DriftNet?
     private var remoteNodes: [String: RemoteNode] = [:]
     private var boardLabel: SKLabelNode?
+    private var abilityLabel: SKLabelNode?
+    /// The radius the ring is currently drawn at — SURGE changes it mid-round.
+    private var shownRadius: CGFloat = 0
 
     init(size: CGSize, seed: UInt32, playerClass: PlayerClass, onRoundEnd: @escaping (Int) -> Void) {
         self.sim = DriftSim(seed: seed, playerClass: playerClass)
@@ -168,7 +171,8 @@ final class DriftScene: SKScene {
         guard fieldScale > 0 else { return }
         let pos = attractorNode?.position
         attractorNode?.removeFromParent()
-        let n = SKShapeNode(circleOfRadius: sim.playerClass.captureRange * fieldScale)
+        let r = shownRadius > 0 ? shownRadius : sim.playerClass.captureRange
+        let n = SKShapeNode(circleOfRadius: r * fieldScale)
         n.strokeColor = UIColor(red: 0.91, green: 0.56, blue: 0.31, alpha: 0.55)
         n.lineWidth = 1.5
         n.fillColor = .clear
@@ -196,7 +200,14 @@ final class DriftScene: SKScene {
         sim.attractor = CGPoint(x: fx, y: fy)
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with e: UIEvent?) {
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // A second finger fires the ability. No on-screen button: the thumb is already
+        // steering and a button would sit exactly where the field is, so the gesture is
+        // the control. The HUD shows readiness so it is discoverable rather than secret.
+        if touches.count > 1 || (event?.allTouches?.count ?? 1) > 1 {
+            if sim.fireAbility() { Haptics.shared.tap(intensity: 0.9) }
+            return
+        }
         if let t = touches.first { setAttractor(t.location(in: self)) }
     }
     override func touchesMoved(_ touches: Set<UITouch>, with e: UIEvent?) {
@@ -230,6 +241,31 @@ final class DriftScene: SKScene {
         scoreLabel?.text = "\(sim.score)"
         comboLabel?.text = sim.combo > 1.05 ? String(format: "×%.1f", sim.combo) : ""
         timerLabel?.text = String(format: "%.0fs", max(0, sim.roundLength - sim.elapsed))
+
+        // Readiness, so a two-finger tap is discoverable instead of hidden.
+        if abilityLabel == nil {
+            let l = hud(size: 12, weight: .regular)
+            l.horizontalAlignmentMode = .center
+            addChild(l)
+            abilityLabel = l
+        }
+        abilityLabel?.position = CGPoint(x: size.width / 2, y: 34)
+        if sim.abilityRemaining > 0 {
+            abilityLabel?.text = "\(sim.playerClass.ability) ACTIVE"
+            abilityLabel?.fontColor = UIColor(red: 0.91, green: 0.56, blue: 0.31, alpha: 1)
+        } else if sim.abilityReady {
+            abilityLabel?.text = "\(sim.playerClass.ability) · two-finger tap"
+            abilityLabel?.fontColor = UIColor(white: 0.85, alpha: 0.8)
+        } else {
+            abilityLabel?.text = String(format: "%@ · %.0fs", sim.playerClass.ability, sim.abilityCooldown)
+            abilityLabel?.fontColor = UIColor(white: 0.55, alpha: 0.65)
+        }
+
+        // The ring grows while SURGE is active, because the reach really has grown —
+        // showing the true capture radius is the difference between an effect and a claim.
+        let wantRadius = sim.playerClass.captureRange *
+            (sim.abilityRemaining > 0 && sim.playerClass.name == "SURGE" ? 2.6 : 1.0)
+        if abs(shownRadius - wantRadius) > 0.5 { shownRadius = wantRadius; rebuildAttractor() }
 
         if sim.isOver && !wasOver { onRoundEnd(sim.score) }
     }

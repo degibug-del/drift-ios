@@ -38,8 +38,11 @@ public struct PlayerClass: Equatable {
 
     public static let void  = PlayerClass(name: "VOID",  pullMult: 1.7, captureRange: 95,
                                           ability: "SINGULARITY", cooldown: 6)
+    // Named SURGE, not CHAIN GATE. The web game's chain gate spawns a gate at the cursor
+    // and this build has no gates — advertising it on the class card was the app telling
+    // the player something untrue. The ability is named for what it actually does.
     public static let surge = PlayerClass(name: "SURGE", pullMult: 1.0, captureRange: 75,
-                                          ability: "CHAIN GATE", cooldown: 8)
+                                          ability: "SURGE", cooldown: 8)
     public static let phase = PlayerClass(name: "PHASE", pullMult: 1.1, captureRange: 115,
                                           ability: "FREEZE", cooldown: 9)
 
@@ -116,6 +119,43 @@ public final class DriftSim {
 
     private var rng: Mulberry
     private var comboDecay: TimeInterval = 0
+
+    // ── the ability ─────────────────────────────────────────────────────────
+    // Each class had a name on its card and nothing behind it: SINGULARITY, CHAIN GATE and
+    // FREEZE were strings. The only real difference between classes was pullMult and
+    // captureRange, so choosing PHASE changed two numbers and printed a promise.
+    //
+    // All three now do what they say, and each is distinct in KIND rather than in degree —
+    // one changes the force, one changes the reach, one stops time. A cooldown that differs
+    // by a second between three otherwise identical buttons is not three abilities.
+    public private(set) var abilityCooldown: TimeInterval = 0
+    public private(set) var abilityRemaining: TimeInterval = 0
+    public var abilityReady: Bool { abilityCooldown <= 0 && abilityRemaining <= 0 }
+    /// 0…1 for a cooldown ring in the UI.
+    public var abilityCharge: CGFloat {
+        guard playerClass.cooldown > 0 else { return 1 }
+        return abilityCooldown <= 0 ? 1 : 1 - CGFloat(abilityCooldown / playerClass.cooldown)
+    }
+
+    private static let duration: TimeInterval = 3.0
+
+    /// Fire it. Ignored unless ready, so the caller does not have to check.
+    @discardableResult
+    public func fireAbility() -> Bool {
+        guard abilityReady else { return false }
+        abilityRemaining = playerClass.name == "PHASE" ? 4.0 : Self.duration
+        abilityCooldown = playerClass.cooldown + abilityRemaining
+        // SINGULARITY is a one-shot harvest, not a window: everything within a third of
+        // the field is taken at once. A sustained stronger pull was measured at +5%, which
+        // is noise; a burst is felt and is worth the cooldown.
+        if playerClass.name == "VOID" { pendingSingularity = true }
+        // FREEZE holds the combo where it is and lifts it — the multiplier is half the
+        // score, and protecting it is what "patience · control" is actually worth.
+        if playerClass.name == "PHASE" { combo = min(6, combo + 1.5) }
+        return true
+    }
+
+    private var pendingSingularity = false
     /// Where the attractor was when the combo last rose — see the scoring note in step().
     private var lastComboPoint = CGPoint(x: FieldSize.width / 2, y: FieldSize.height / 2)
     private var pointsCarry: CGFloat = 0
@@ -156,8 +196,37 @@ public final class DriftSim {
         elapsed += dt
         captures.removeAll(keepingCapacity: true)
 
-        let pull = playerClass.pullMult
-        let range = playerClass.captureRange
+        // Cooldown runs whether or not the ability is active; the active window is a
+        // prefix of it, so one timer cannot drift out of step with the other.
+        if abilityCooldown > 0 { abilityCooldown = max(0, abilityCooldown - dt) }
+        if abilityRemaining > 0 { abilityRemaining = max(0, abilityRemaining - dt) }
+        let active = abilityRemaining > 0
+
+        // Three abilities that differ in KIND — and all three act on the thing that
+        // actually decides the score.
+        //
+        // Two earlier designs failed measurement and are worth recording. FREEZE-as-
+        // stop-motion made PHASE score 3% WORSE than not firing: frozen particles stop
+        // drifting toward the attractor, so it prevented what it was meant to help.
+        // SINGULARITY-as-stronger-pull gained 5%, which is inside the noise — because
+        // scoring is dominated by how much field you sweep, not how hard you pull, so an
+        // ability that only changes local physics cannot move the number.
+        //
+        // SURGE was the one that worked (+22%) and it shows why: reach multiplies captures
+        // directly. So all three now act on captures or combo, the two terms in the score.
+        //
+        // FREEZE was first written as "stop position updates entirely", and measurement
+        // showed it made PHASE score 3% WORSE than not firing at all — frozen particles
+        // stop drifting toward the attractor, so the ability actively prevented the thing
+        // it was meant to help. It now kills the particles' INHERITED velocity instead, so
+        // during the window they move under attraction alone: no overshoot, no orbiting,
+        // everything falls straight in. That is what "patience · control" should mean.
+        let boostPull  = 1.0
+        let boostRange = active && playerClass.name == "SURGE" ? 2.6 : 1.0
+        let frozen     = active && playerClass.name == "PHASE"
+
+        let pull = playerClass.pullMult * boostPull
+        let range = playerClass.captureRange * boostRange
         let range2 = range * range
         let ax = attractor.x, ay = attractor.y
 
@@ -186,7 +255,8 @@ public final class DriftSim {
             if p.x < 0 { p.x += FieldSize.width } else if p.x > FieldSize.width { p.x -= FieldSize.width }
             if p.y < 0 { p.y += FieldSize.height } else if p.y > FieldSize.height { p.y -= FieldSize.height }
 
-            if d2 < range2 {
+            // The singularity radius is checked on the frame it fires only.
+            if d2 < range2 || (pendingSingularity && d2 < 520 * 520) {
                 p.captured = true
                 captures.append(CGPoint(x: p.x, y: p.y))
             }
@@ -205,10 +275,16 @@ public final class DriftSim {
         //
         // The fix is to pay for the ACT of capturing rather than the volume, and to make
         // the combo a reward for continuing to find density rather than for sitting in it.
+        let burst = pendingSingularity
+        pendingSingularity = false
         if !captures.isEmpty {
             // Sub-linear in count: a burst of twenty is worth more than a burst of five,
             // but not four times more. sqrt keeps a lucky clump from dwarfing skilled play.
-            let volume = sqrt(CGFloat(captures.count))
+            // sqrt exists to stop a LUCKY clump paying out of proportion. An ability is
+            // not luck — it is a deliberate act on a cooldown — so its harvest is scored
+            // linearly. Without this exemption the two designs fight: a singularity taking
+            // 300 particles paid sqrt(300) = 17, and firing it measured WORSE than not.
+            let volume = burst ? CGFloat(captures.count) * 0.22 : sqrt(CGFloat(captures.count))
             pointsCarry += volume * combo * Self.rate
             // Points accumulate as a fraction and are banked as whole numbers. Rounding
             // every frame instead would floor most frames to zero at this rate and the
@@ -229,7 +305,8 @@ public final class DriftSim {
             // The combo is a reward for continuous capture, so it has to bleed when the
             // player stops. Without decay a single good sweep holds the maximum all round.
             comboDecay += dt
-            if comboDecay > 0.9 { combo = max(1, combo - CGFloat(dt) * 2.2) }
+            // FREEZE suspends decay outright — that is the "freeze".
+            if comboDecay > 0.9 && !frozen { combo = max(1, combo - CGFloat(dt) * 2.2) }
         }
 
         // Respawn what was taken, away from the attractor — see Particle.spawn.
