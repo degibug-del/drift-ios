@@ -50,12 +50,15 @@ final class DriftNet {
     var onError: ((String) -> Void)?
 
     // ── connection ───────────────────────────────────────────────────────────
-    func connect(server: String, name: String) {
+    /// No name parameter: the server names you and sends it back on `welcome`. Nothing this
+    /// client sends is text a person typed, which is what keeps the game free of
+    /// user-generated content rather than merely light on it.
+    func connect(server: String) {
         var c = URLComponents()
         c.scheme = "wss"
         c.host = Self.host
         c.path = "/ws"
-        c.queryItems = [.init(name: "server", value: server), .init(name: "name", value: name)]
+        c.queryItems = [.init(name: "server", value: server)]
         guard let url = c.url else { onError?("bad server url"); return }
 
         let t = URLSession.shared.webSocketTask(with: url)

@@ -64,16 +64,19 @@ final class LobbyModel: ObservableObject {
 }
 
 struct ServerBrowser: View {
-    @Binding var name: String
     let onBack: () -> Void
     let onJoin: (String) -> Void
 
     @StateObject private var model = LobbyModel()
-    @FocusState private var nameFocused: Bool
 
-    /// Two characters minimum, same rule as the web lobby. A room of identical default
-    /// names is not a multiplayer game — you cannot tell who took the cluster you wanted.
-    private var nameOK: Bool { name.trimmingCharacters(in: .whitespaces).count >= 2 }
+    // There was a name field here. It is gone because a name one player types is content
+    // another player reads, and that single text box would have made this an app with
+    // user-generated content — owing filtering, reporting and blocking under Guideline 1.2
+    // for a game that otherwise offers no way at all to send another person anything.
+    //
+    // The server assigns a name and tells you what it picked. What the field was FOR is
+    // preserved: names still have to be DISTINCT, or you cannot tell who took the cluster
+    // you were going for. Typing them was only ever one way to get that.
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -92,25 +95,10 @@ struct ServerBrowser: View {
                 .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
                 .padding(.horizontal, 20).padding(.bottom, 14)
 
-            TextField("your name", text: $name)
-                .font(.system(size: 14, design: .monospaced))
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($nameFocused)
-                .padding(11)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.05)))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.white.opacity(0.12)))
-                .padding(.horizontal, 20)
-                .onChange(of: name) { _, new in
-                    if new.count > 16 { name = String(new.prefix(16)) }
-                }
-
-            if !nameOK {
-                Text("pick a name to join — 2 characters or more")
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 20).padding(.top, 6)
-            }
+            Text("the field will name you when you arrive")
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 20).padding(.bottom, 4)
 
             if let e = model.error {
                 Text(e).font(.system(size: 12, design: .monospaced))
@@ -119,7 +107,7 @@ struct ServerBrowser: View {
             }
 
             List(model.servers) { s in
-                Button { if nameOK { onJoin(s.id) } else { nameFocused = true } } label: {
+                Button { onJoin(s.id) } label: {
                     HStack(spacing: 12) {
                         RoundedRectangle(cornerRadius: 2).fill(s.color).frame(width: 3, height: 34)
                         VStack(alignment: .leading, spacing: 2) {
@@ -137,8 +125,6 @@ struct ServerBrowser: View {
                         }
                     }
                 }
-                .disabled(!nameOK)
-                .opacity(nameOK ? 1 : 0.4)
                 .listRowBackground(Color.white.opacity(0.03))
                 .accessibilityLabel("\(s.name). \(s.players) players, \(s.bots) bots. \(s.blurb)")
             }

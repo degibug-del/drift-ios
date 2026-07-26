@@ -59,7 +59,6 @@ enum Route: Equatable {
 struct RootView: View {
     @State private var route: Route = .menu
     @State private var cls: PlayerClass = .void
-    @AppStorage("drift_name") private var playerName = ""
     // v2: the scoring model changed by a factor of ~18, so a best carried over from the
     // old one is unbeatable and reads as a bug. A new key retires it without deleting it.
     @AppStorage("drift_best_v2") private var best = 0
@@ -82,14 +81,13 @@ struct RootView: View {
                                                      cls: cls, mode: m, server: nil) }
                          }) }
             case .servers:
-                DriftPage { ServerBrowser(name: $playerName,
-                              onBack: { route = .menu },
+                DriftPage { ServerBrowser(onBack: { route = .menu },
                               onJoin: { s in
                                   route = .playing(seed: UInt32.random(in: 1...4_000_000_000),
                                                    cls: cls, mode: .online, server: s)
                               }) }
             case let .playing(seed, c, m, server):
-                GameView(seed: seed, cls: c, mode: m, server: server, name: playerName) { score, team, foe, peak in
+                GameView(seed: seed, cls: c, mode: m, server: server) { score, team, foe, peak in
                     // Only SOLO feeds the personal best. A 180-second ZEN round and a
                     // 45-second BLITZ round are not comparable, and one "best" across all
                     // of them would just record which mode is longest.
@@ -326,7 +324,6 @@ struct GameView: UIViewRepresentable {
     let cls: PlayerClass
     let mode: Mode
     let server: String?
-    let name: String
     /// (your score, your team's score, the opposing score) — the last two matter only in
     /// 1V1 and 2V2, and equal the first and zero elsewhere.
     /// (your score, team score, opposing score, peak combo this round)
@@ -363,7 +360,7 @@ struct GameView: UIViewRepresentable {
             // socket opens — and once welcome lands they are on everyone else's field.
             net.onWelcome = { [weak scene] s in scene?.restart(seed: s) }
             net.onRoundReset = { [weak scene] s in scene?.restart(seed: s) }
-            net.connect(server: server, name: name)
+            net.connect(server: server)
         }
         return v
     }
